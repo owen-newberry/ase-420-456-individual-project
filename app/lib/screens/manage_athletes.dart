@@ -143,7 +143,7 @@ class _ManageAthletesScreenState extends State<ManageAthletesScreen> {
                         Expanded(child: Text(name as String, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
                         IconButton(
                           tooltip: 'Delete athlete',
-                          icon: const Icon(Icons.delete_forever, color: Colors.redAccent),
+                          icon: Icon(Icons.delete_forever, color: Theme.of(context).colorScheme.primary),
                           onPressed: () async {
                             // Confirmation dialog
                             final confirmed = await showDialog<bool>(context: context, builder: (ctx) {

@@ -15,6 +15,22 @@ class SelectRoleScreen extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Brand logo at top (falls back to app title if asset missing)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 24.0),
+                child: Column(
+                  children: [
+                    SizedBox(
+                      height: 120,
+                      child: Image.asset(
+                        'assets/dna_logo.png',
+                        fit: BoxFit.contain,
+                        errorBuilder: (ctx, err, st) => const Center(child: Text('DNA Sports Center', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               ElevatedButton(
                 onPressed: () {
                   Navigator.of(context).push(MaterialPageRoute(builder: (_) => const _RoleTarget(role: 'trainer')));

@@ -289,7 +289,7 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
                     const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-                      decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(6)),
+                      decoration: BoxDecoration(color: Theme.of(context).dividerColor.withOpacity(0.08), borderRadius: BorderRadius.circular(6)),
                       child: Text(_repsPerSet.toString(), style: Theme.of(context).textTheme.titleMedium),
                     ),
                     const SizedBox(width: 12),
@@ -318,14 +318,14 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
                             return Container(
                               height: 180,
                               width: double.infinity,
-                              decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(8.0)),
+                              decoration: BoxDecoration(color: Theme.of(context).dividerColor.withOpacity(0.06), borderRadius: BorderRadius.circular(8.0)),
                               child: const Center(child: Text('Loading video...')),
                             );
                           } else if (snap.hasError) {
                             return Container(
                               height: 180,
                               width: double.infinity,
-                              decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(8.0)),
+                              decoration: BoxDecoration(color: Theme.of(context).dividerColor.withOpacity(0.06), borderRadius: BorderRadius.circular(8.0)),
                               child: Center(child: Text('Video failed to load: ${snap.error}')),
                             );
                           } else if (_videoController!.value.isInitialized) {
@@ -337,7 +337,7 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
                             return Container(
                               height: 180,
                               width: double.infinity,
-                              decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(8.0)),
+                              decoration: BoxDecoration(color: Theme.of(context).dividerColor.withOpacity(0.06), borderRadius: BorderRadius.circular(8.0)),
                               child: const Center(child: Text('Video not available')),
                             );
                           }
@@ -347,7 +347,7 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
                       Container(
                         height: 180,
                         width: double.infinity,
-                        decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(8.0)),
+                        decoration: BoxDecoration(color: Theme.of(context).dividerColor.withOpacity(0.06), borderRadius: BorderRadius.circular(8.0)),
                         child: const Center(child: Text('No video attached')),
                       ),
                     const SizedBox(height: 8),
@@ -442,18 +442,18 @@ class _FullscreenVideoScreenState extends State<FullscreenVideoScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(backgroundColor: Colors.black, elevation: 0),
+  backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
+  appBar: AppBar(backgroundColor: Theme.of(context).appBarTheme.backgroundColor, elevation: 0),
       body: Center(
         child: _controller == null
-            ? const Text('No video', style: TextStyle(color: Colors.white))
+            ? Text('No video', style: TextStyle(color: Theme.of(context).appBarTheme.foregroundColor ?? Colors.white))
             : FutureBuilder<void>(
                 future: _initFuture,
                 builder: (context, snap) {
                   if (snap.connectionState == ConnectionState.waiting) {
                     return const CircularProgressIndicator();
                   } else if (snap.hasError) {
-                    return Text('Failed to load: ${snap.error}', style: const TextStyle(color: Colors.white));
+                    return Text('Failed to load: ${snap.error}', style: TextStyle(color: Theme.of(context).appBarTheme.foregroundColor ?? Colors.white));
                   } else if (_controller!.value.isInitialized) {
                     return GestureDetector(
                       onTap: () {
@@ -467,7 +467,7 @@ class _FullscreenVideoScreenState extends State<FullscreenVideoScreen> {
                       ),
                     );
                   } else {
-                    return const Text('Video not available', style: TextStyle(color: Colors.white));
+                    return Text('Video not available', style: TextStyle(color: Theme.of(context).appBarTheme.foregroundColor ?? Colors.white));
                   }
                 },
               ),
