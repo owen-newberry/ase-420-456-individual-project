@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -33,9 +34,7 @@ class PocketBaseService {
   void _logAndThrow(http.Response res, String context) {
     // Print response body (if any) to help diagnose 4xx/5xx failures during
     // development. We keep this lightweight and tolerant of errors.
-    try {
-      print('PocketBase $context failed: status=${res.statusCode} body=${res.body}');
-    } catch (_) {}
+    // debug printing removed
     final rb = (res.body.isNotEmpty) ? res.body : res.reasonPhrase;
     throw HttpException('$context failed: ${res.statusCode} $rb');
   }
@@ -191,37 +190,162 @@ class PocketBaseService {
     return jsonDecode(res.body) as Map<String,dynamic>;
   }
 
+  /// Fetch logs for a specific athlete/plan/exercise. Returns list of log records sorted by createdAt desc.
+  Future<List<dynamic>> fetchLogsForExercise(String athleteId, String planId, String exerciseId, {int perPage = 20}) async {
+    await _ensureTokenLoaded();
+    final filter = Uri.encodeQueryComponent('athlete = "$athleteId" && plan = "$planId" && exerciseId = "$exerciseId"');
+    final url = Uri.parse('$baseUrl/api/collections/logs/records?filter=$filter&perPage=$perPage&sort=-createdAt');
+    final res = await http.get(url, headers: _jsonHeaders);
+    if (res.statusCode != 200) _logAndThrow(res, 'Fetch logs');
+    final data = jsonDecode(res.body) as Map<String,dynamic>;
+    return data['items'] as List<dynamic>? ?? [];
+  }
+
+  /// Normalize a `sets` field from a log record into a List<Map> with
+  /// numeric `weight` values where possible.
+  ///
+  /// PocketBase records in this project may store `sets` either as a
+  /// JSON-encoded string or as a native list (depending on how the record
+  /// was created). This helper handles both shapes and coerces the
+  /// `weight` value to a double when possible so UI code can rely on
+  /// numeric types.
+  List<Map<String, dynamic>> normalizeSetsField(dynamic setsRaw) {
+    List<dynamic> parsed = [];
+    if (setsRaw == null) return <Map<String, dynamic>>[];
+
+    // Defensive decoding: some records are stored as JSON-encoded strings
+    // and some may have been double-encoded (a string containing escaped
+    // JSON). Attempt repeated decoding up to a few times to recover the
+    // actual list shape.
+    dynamic working = setsRaw;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (working is List) {
+        parsed = working;
+        break;
+      }
+      if (working is String) {
+        try {
+          final p = jsonDecode(working);
+          // If decoding yields a list, we're done. If it yields another
+          // string (double-encoded) we'll loop and try again.
+          working = p;
+          if (working is List) {
+            parsed = working;
+            break;
+          }
+        } catch (_) {
+          // not valid JSON string, break and treat as empty
+          working = null;
+          break;
+        }
+      } else {
+        // unknown shape, break
+        break;
+      }
+    }
+
+    final out = <Map<String, dynamic>>[];
+    for (final s in parsed) {
+      try {
+        if (s is Map) {
+          final m = Map<String, dynamic>.from(s);
+          final wraw = m['weight'];
+          double? w;
+          if (wraw is num) w = wraw.toDouble();
+          else w = double.tryParse(wraw?.toString() ?? '');
+          if (w != null) m['weight'] = w;
+          out.add(m);
+        }
+      } catch (_) {
+        // ignore malformed set entries
+      }
+    }
+    return out;
+  }
+
   /// Upload a video file. Creates a video record and uploads the file field.
   /// Returns the created video record JSON.
-  Future<Map<String, dynamic>> uploadVideo(String title, String filePath) async {
-    // create record
+  /// Upload a video. Provide either [filePath] (preferred when available) or
+  /// provide [bytes] and [filename] when the platform returns the file contents
+  /// directly (some pickers on certain platforms do this). Returns the created
+  /// video record JSON (refetched after upload to include file metadata).
+  Future<Map<String, dynamic>> uploadVideo(String title, {String? description, String? filePath, Uint8List? bytes, String? filename}) async {
     await _ensureTokenLoaded();
     if (_authToken == null) throw HttpException('Not authenticated: please sign in before uploading videos');
+    // Use a single multipart CREATE request (title, description, file) rather
+    // than creating an empty record and uploading the file afterward. Some
+    // PocketBase setups (and our test instance) reject or 404 the separate
+    // file-upload endpoint; submitting the file during create is more
+    // portable and avoids an extra round-trip.
     final createUrl = Uri.parse('$baseUrl/api/collections/videos/records');
-    final createBody = jsonEncode({'title': title});
-    final createRes = await http.post(createUrl, headers: _jsonHeaders, body: createBody);
-    if (createRes.statusCode != 200 && createRes.statusCode != 201) {
-      _logAndThrow(createRes, 'Create video record');
-    }
-    final video = jsonDecode(createRes.body) as Map<String,dynamic>;
-    final recordId = video['id'] as String?;
-    if (recordId == null) throw HttpException('Create video record did not return id');
+    final req = http.MultipartRequest('POST', createUrl);
+    if (_authToken != null) req.headers['Authorization'] = 'Bearer ${_authToken}';
+    req.fields['title'] = title;
+    if (description != null) req.fields['description'] = description;
 
-    // upload file
-    final uploadUrl = Uri.parse('$baseUrl/api/collections/videos/records/$recordId/files/file');
-    final req = http.MultipartRequest('POST', uploadUrl);
-  // ensure auth header is present for the multipart upload
-  req.headers['Authorization'] = 'Bearer ${_authToken}';
-    req.files.add(await http.MultipartFile.fromPath('file', filePath));
+    if (bytes != null) {
+      final name = filename ?? 'upload.mp4';
+      req.files.add(http.MultipartFile.fromBytes('file', bytes, filename: name));
+    } else if (filePath != null && filePath.isNotEmpty) {
+      req.files.add(await http.MultipartFile.fromPath('file', filePath));
+    } else {
+      throw ArgumentError('Either filePath or bytes+filename must be provided for upload');
+    }
+
     final streamed = await req.send();
     final res = await http.Response.fromStream(streamed);
+    // debug logging removed
     if (res.statusCode != 200 && res.statusCode != 201) {
-      final body = res.body.isNotEmpty ? res.body : res.reasonPhrase;
-      throw HttpException('Upload failed: ${res.statusCode} $body');
+      _logAndThrow(res, 'Create+upload video');
     }
 
-    // Return the updated record (refetch to get file metadata)
+    // Return the created record JSON as provided by the server
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  /// Update an existing video record's `file` field by uploading a new file for it.
+  /// Returns the updated video record JSON.
+  Future<Map<String, dynamic>> updateVideoFile(String recordId, {String? filePath, Uint8List? bytes, String? filename}) async {
+    await _ensureTokenLoaded();
+    if (_authToken == null) throw HttpException('Not authenticated: please sign in before uploading videos');
+    final uploadUrl = Uri.parse('$baseUrl/api/collections/videos/records/$recordId/files/file');
+    final req = http.MultipartRequest('POST', uploadUrl);
+    req.headers['Authorization'] = 'Bearer ${_authToken}';
+
+    if (bytes != null) {
+      final name = filename ?? 'upload.mp4';
+      req.files.add(http.MultipartFile.fromBytes('file', bytes, filename: name));
+    } else if (filePath != null && filePath.isNotEmpty) {
+      req.files.add(await http.MultipartFile.fromPath('file', filePath));
+    } else {
+      throw ArgumentError('Either filePath or bytes+filename must be provided for upload');
+    }
+
+    final streamed = await req.send();
+    final res = await http.Response.fromStream(streamed);
+    // debug logging removed
+    if (res.statusCode != 200 && res.statusCode != 201) {
+      _logAndThrow(res, 'Update video file');
+    }
+
+    // return refreshed video record
     return await getVideoById(recordId);
+  }
+
+  /// Patch video record metadata (title/description).
+  Future<Map<String, dynamic>> updateVideoMetadata(String recordId, {String? title, String? description}) async {
+    await _ensureTokenLoaded();
+    if (_authToken == null) throw HttpException('Not authenticated: please sign in before updating videos');
+    final url = Uri.parse('$baseUrl/api/collections/videos/records/$recordId');
+    final headers = Map<String,String>.from(_jsonHeaders);
+    headers['Content-Type'] = 'application/json';
+    final body = jsonEncode({
+      if (title != null) 'title': title,
+      if (description != null) 'description': description,
+    });
+    final res = await http.patch(url, headers: headers, body: body);
+    if (res.statusCode != 200) _logAndThrow(res, 'Update video metadata');
+    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   /// Fetch a user (record) by id from the `users` collection.
@@ -250,7 +374,7 @@ class PocketBaseService {
       trainerEmail = null;
     }
     // Debug: log inputs
-    try { print('fetchAthletesForTrainer called with trainerId=$trainerId trainerEmail=$trainerEmail'); } catch (_) {}
+  // debug logging removed
   // Ensure token is loaded before making authenticated requests.
   await _ensureTokenLoaded();
 
@@ -264,17 +388,17 @@ class PocketBaseService {
       if (serverRes.statusCode == 200) {
         final serverData = jsonDecode(serverRes.body) as Map<String, dynamic>;
         final serverItems = serverData['items'] as List<dynamic>? ?? [];
-        try { print('fetchAthletesForTrainer: server filter returned ${serverItems.length} items'); } catch (_) {}
+  // debug logging removed
         if (serverItems.isNotEmpty) {
           // Return server-filtered results (they should already be athlete users)
           return serverItems;
         }
         // else fall through to a client-side fetch+filter as a fallback
       } else {
-        try { print('fetchAthletesForTrainer: server filter request failed status=${serverRes.statusCode}'); } catch (_) {}
+  // debug logging removed
       }
     } catch (e) {
-      try { print('fetchAthletesForTrainer: server filter request error: $e'); } catch (_) {}
+  // debug logging removed
     }
 
     // Fallback: fetch all users (no role filter) and filter client-side. Some records
@@ -299,7 +423,7 @@ class PocketBaseService {
           try {
             final full = await getUserById(raw['id'] as String);
             trainerField = full['trainer'];
-            try { print('fetchAthletesForTrainer: fetched full user ${raw['id']} trainer=${trainerField}'); } catch (_) {}
+            // debug logging removed
           } catch (_) {
             // ignore; we'll treat trainerField as null
           }
@@ -363,7 +487,7 @@ class PocketBaseService {
       }
     }
 
-    try { print('fetchAthletesForTrainer: fetched ${items.length} athletes, matched ${filtered.length}'); } catch (_) {}
+  // debug logging removed
     return filtered;
   }
 
@@ -484,6 +608,14 @@ class PocketBaseService {
     final url = Uri.parse('$baseUrl/api/collections/templates/records/$id');
     final res = await http.get(url, headers: _jsonHeaders);
     if (res.statusCode != 200) throw HttpException('Get template failed: ${res.statusCode}');
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  /// Fetch a plan record by id.
+  Future<Map<String, dynamic>> getPlanById(String id) async {
+    final url = Uri.parse('$baseUrl/api/collections/plans/records/$id');
+    final res = await http.get(url, headers: _jsonHeaders);
+    if (res.statusCode != 200) throw HttpException('Get plan failed: ${res.statusCode}');
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 

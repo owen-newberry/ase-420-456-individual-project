@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../screens/select_role.dart';
+import '../screens/account.dart';
 import '../services/pocketbase_service.dart';
 
 class AccountAction extends StatelessWidget {
@@ -30,11 +31,7 @@ class AccountAction extends StatelessWidget {
           Navigator.of(context).pushAndRemoveUntil(
               MaterialPageRoute(builder: (_) => const SelectRoleScreen()), (r) => false);
         } else if (v == 'profile') {
-          // For now show a simple dialog
-          showDialog(
-            context: context,
-            builder: (_) => AlertDialog(title: Text('Profile'), content: Text('User: $name'), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))]),
-          );
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AccountScreen()));
         }
       },
       itemBuilder: (ctx) => [

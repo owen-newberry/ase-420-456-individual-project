@@ -1,4 +1,7 @@
+// dart:convert removed (no longer needed)
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:video_player/video_player.dart';
 import '../services/pocketbase_service.dart';
 import '../widgets/account_action.dart';
 
@@ -18,9 +21,11 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
   final PocketBaseService _pb = PocketBaseService();
   String _displayName = '';
 
+  VideoPlayerController? _videoController;
+  Future<void>? _initializeVideoFuture;
+
   // controllers per set
   List<TextEditingController> _weightControllers = [];
-  List<bool> _savedFlags = [];
 
   int _setsCount = 1;
   int _repsPerSet = 0;
@@ -30,6 +35,107 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
     super.initState();
     _initFromExercise();
     _loadProfile();
+    _initVideoIfNeeded();
+    _populateSavedWeights();
+  }
+
+  Future<void> _populateSavedWeights() async {
+    // Prefer parsing planned sets from the plan record every time the page
+    // loads. This allows the app to show the intended weights/sets defined
+    // in the plan itself. If the plan doesn't include weights, we still
+    // leave boxes empty so athletes can enter values.
+    try {
+      final plan = await _pb.getPlanById(widget.planId);
+      var exercisesRaw = plan['exercises'];
+      List<dynamic> exercises = [];
+      if (exercisesRaw is String) {
+        try {
+          final p = jsonDecode(exercisesRaw);
+          if (p is List) exercises = p;
+        } catch (_) {
+          exercises = [];
+        }
+      } else if (exercisesRaw is List) {
+        exercises = exercisesRaw;
+      }
+
+      if (exercises.isNotEmpty) {
+        Map<String, dynamic>? matched;
+        for (final ex in exercises) {
+          try {
+            if (ex is Map) {
+              final idCandidates = [ex['id'], ex['exerciseId'], ex['name']];
+              for (final c in idCandidates) {
+                if (c != null && c.toString() == widget.exerciseId) {
+                  matched = Map<String, dynamic>.from(ex);
+                  break;
+                }
+              }
+              if (matched != null) break;
+            } else if (ex is String) {
+              if (ex == widget.exerciseId) {
+                // found a simple string entry - no weights available
+                matched = {'id': ex};
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (matched != null) {
+          // Attempt to extract a `sets` definition from the matched exercise.
+          // The plan exercise may contain a `sets` field which is either an
+          // integer (count) or a list of template sets with weight/reps.
+          final setsRaw = matched['sets'];
+          List<Map<String, dynamic>> planSets = [];
+          if (setsRaw == null) {
+            // nothing to prefill
+            planSets = [];
+          } else if (setsRaw is num || (setsRaw is String && int.tryParse(setsRaw) != null)) {
+            // numeric sets count; nothing to prefill weights from
+            planSets = [];
+          } else {
+            // delegate parsing to normalizeSetsField to coerce weights
+            planSets = _pb.normalizeSetsField(setsRaw);
+          }
+
+          if (planSets.isNotEmpty) {
+            for (var i = 0; i < _setsCount && i < planSets.length; i++) {
+              try {
+                final s = planSets[i];
+                double w = 0.0;
+                if (s['weight'] != null) {
+                  w = (s['weight'] is num) ? (s['weight'] as num).toDouble() : double.tryParse(s['weight'].toString()) ?? 0.0;
+                }
+                _weightControllers[i].text = w == 0.0 ? '' : w.toString();
+              } catch (_) {}
+            }
+            setState(() {});
+            return;
+          }
+        }
+      }
+
+      // If plan didn't provide template weights, fall back to most recent saved log
+      final logs = await _pb.fetchLogsForExercise(widget.athleteId, widget.planId, widget.exerciseId, perPage: 1);
+      if (logs.isEmpty) return;
+      final latest = logs.first as Map<String, dynamic>;
+      final savedSets = _pb.normalizeSetsField(latest['sets']);
+      if (savedSets.isEmpty) return;
+      for (var i = 0; i < _setsCount && i < savedSets.length; i++) {
+        try {
+          final s = savedSets[i];
+          double w = 0.0;
+          if (s['weight'] != null) {
+            w = (s['weight'] is num) ? (s['weight'] as num).toDouble() : double.tryParse(s['weight'].toString()) ?? 0.0;
+          }
+          _weightControllers[i].text = w == 0.0 ? '' : w.toString();
+        } catch (_) {}
+      }
+      setState(() {});
+    } catch (_) {
+      // ignore fetch errors
+    }
   }
 
   void _initFromExercise() {
@@ -42,14 +148,52 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
       _repsPerSet = (r is int) ? r : (int.tryParse(r?.toString() ?? '') ?? 0);
     }
     if (_setsCount < 1) _setsCount = 1;
-    _weightControllers = List.generate(_setsCount, (_) => TextEditingController());
-    _savedFlags = List.generate(_setsCount, (_) => false);
+  _weightControllers = List.generate(_setsCount, (_) => TextEditingController());
+  }
+
+  void _initVideoIfNeeded() {
+    final ex = widget.exercise;
+    if (ex == null) return;
+    final vid = ex['video'];
+    if (vid == null || vid is! Map) return;
+    final fileName = vid['file'] as String?;
+    final collectionId = vid['collectionId'] as String? ?? vid['collection'] as String?;
+    final recordId = vid['id'] as String? ?? vid['_id'] as String?;
+    if (fileName == null || collectionId == null || recordId == null) return;
+    final url = '${_pb.baseUrl}/api/files/$collectionId/$recordId/$fileName';
+    try {
+      // Log the URL for debugging so you can curl it from host if needed.
+  // Debug logging removed
+      _videoController = VideoPlayerController.network(url);
+      // store the initialization future and let the UI react to it via FutureBuilder
+      _initializeVideoFuture = _videoController!.initialize().then((_) async {
+        // ensure audible volume on initialization
+        try { await _videoController?.setVolume(1.0); } catch (_) {}
+        // optionally loop preview clips
+        try { await _videoController?.setLooping(true); } catch (_) {}
+        setState(() {});
+      }).catchError((e) {
+        // initialization error handled by FutureBuilder
+      });
+    } catch (e) {
+      // ignore controller creation errors here; UI will show video not available
+    }
   }
 
   Future<void> _save() async {
     final sets = <Map<String, dynamic>>[];
+    // Only include sets where the trainer/athlete actually entered a weight.
     for (var i = 0; i < _setsCount; i++) {
-      final weight = double.tryParse(_weightControllers[i].text) ?? 0.0;
+      final raw = _weightControllers[i].text.trim();
+      if (raw.isEmpty) continue; // skip empty boxes (partial saves allowed)
+      // Support commas as decimal separators for some locales
+      final normalized = raw.replaceAll(',', '.');
+      final weight = double.tryParse(normalized);
+      if (weight == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Invalid weight at set ${i + 1}: "$raw"')));
+        return;
+      }
       sets.add({
         'weight': weight,
         'reps': _repsPerSet,
@@ -57,9 +201,22 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
         'timestamp': DateTime.now().toIso8601String(),
       });
     }
-    try {
-      await _pb.createLog(widget.athleteId, widget.planId, widget.exerciseId, sets);
+    if (sets.isEmpty) {
       if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter at least one weight before saving')));
+      return;
+    }
+    try {
+      final created = await _pb.createLog(widget.athleteId, widget.planId, widget.exerciseId, sets);
+      // Show the created record so we can confirm how weights were stored on the server
+      if (!mounted) return;
+      await showDialog<void>(context: context, builder: (_) {
+        return AlertDialog(
+          title: const Text('Saved log (server response)'),
+          content: SingleChildScrollView(child: SelectableText(const JsonEncoder.withIndent('  ').convert(created))),
+          actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))],
+        );
+      });
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
@@ -67,32 +224,7 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
     }
   }
 
-  Future<void> _saveSet(int index) async {
-    if (index < 0 || index >= _setsCount) return;
-    final text = _weightControllers[index].text;
-    final weight = double.tryParse(text) ?? 0.0;
-    if (weight <= 0) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid weight before saving')));
-      return;
-    }
-
-    final set = {
-      'weight': weight,
-      'reps': _repsPerSet,
-      'notes': '',
-      'timestamp': DateTime.now().toIso8601String(),
-    };
-    try {
-      await _pb.createLog(widget.athleteId, widget.planId, widget.exerciseId, [set]);
-      if (!mounted) return;
-      setState(() => _savedFlags[index] = true);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Saved set ${index + 1}')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to save set')));
-    }
-  }
+  
 
   void _loadProfile() async {
     try {
@@ -104,11 +236,13 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
     }
   }
 
+
   @override
   void dispose() {
     for (final c in _weightControllers) {
       c.dispose();
     }
+    try { _videoController?.dispose(); } catch (_) {}
     super.dispose();
   }
 
@@ -117,7 +251,7 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
   final ex = widget.exercise;
   final exName = (ex != null) ? (ex['name'] ?? widget.exerciseId) : widget.exerciseId;
 
-    return Scaffold(
+  return Scaffold(
       appBar: AppBar(title: Text(exName.toString()), actions: [Padding(padding: const EdgeInsets.only(right:8.0), child: AccountAction(displayName: _displayName))]),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -159,27 +293,104 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
                       child: Text(_repsPerSet.toString(), style: Theme.of(context).textTheme.titleMedium),
                     ),
                     const SizedBox(width: 12),
-                    // per-set save / status
-                    IconButton(
-                      icon: _savedFlags[i] ? const Icon(Icons.check, color: Colors.green) : const Icon(Icons.save),
-                      onPressed: () => _saveSet(i),
-                      tooltip: _savedFlags[i] ? 'Saved' : 'Save set',
-                    ),
+                    // per-set save / status removed — global Save button at bottom is used
+                    const SizedBox(width: 0),
                   ],
                 ),
               );
             }),
 
             const SizedBox(height: 18),
-            // video placeholder
-            Text('Video', style: Theme.of(context).textTheme.bodyMedium),
-            Container(
-              margin: const EdgeInsets.only(top: 8.0),
-              height: 180,
-              width: double.infinity,
-              decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(8.0)),
-              child: const Center(child: Text('Video placeholder')),
-            ),
+            // video placeholder: only show video section when an attached video exists
+            if (ex != null && ex['video'] != null) ...[
+              Text('Video', style: Theme.of(context).textTheme.bodyMedium),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Column(
+                  children: [
+                    // Use FutureBuilder to render the player once initialization completes
+                    if (_videoController != null)
+                      FutureBuilder<void>(
+                        future: _initializeVideoFuture,
+                        builder: (context, snap) {
+                          if (snap.connectionState == ConnectionState.waiting) {
+                            return Container(
+                              height: 180,
+                              width: double.infinity,
+                              decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(8.0)),
+                              child: const Center(child: Text('Loading video...')),
+                            );
+                          } else if (snap.hasError) {
+                            return Container(
+                              height: 180,
+                              width: double.infinity,
+                              decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(8.0)),
+                              child: Center(child: Text('Video failed to load: ${snap.error}')),
+                            );
+                          } else if (_videoController!.value.isInitialized) {
+                            return AspectRatio(
+                              aspectRatio: _videoController!.value.aspectRatio,
+                              child: VideoPlayer(_videoController!),
+                            );
+                          } else {
+                            return Container(
+                              height: 180,
+                              width: double.infinity,
+                              decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(8.0)),
+                              child: const Center(child: Text('Video not available')),
+                            );
+                          }
+                        },
+                      )
+                    else
+                      Container(
+                        height: 180,
+                        width: double.infinity,
+                        decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(8.0)),
+                        child: const Center(child: Text('No video attached')),
+                      ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                        IconButton(
+                          icon: Icon(_videoController != null && _videoController!.value.isPlaying ? Icons.pause : Icons.play_arrow),
+                          onPressed: () {
+                            if (_videoController == null) return;
+                            setState(() {
+                              if (_videoController!.value.isPlaying) {
+                                _videoController!.pause();
+                              } else {
+                                _videoController!.play();
+                              }
+                            });
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.fullscreen),
+                          onPressed: () {
+                            // Build file URL and open fullscreen player
+                            try {
+                              final vid = ex['video'];
+                              final fileName = vid['file'] as String?;
+                              final collectionId = vid['collectionId'] as String? ?? vid['collection'] as String?;
+                              final recordId = vid['id'] as String? ?? vid['_id'] as String?;
+                              if (fileName == null || collectionId == null || recordId == null) return;
+                              final url = '${_pb.baseUrl}/api/files/$collectionId/$recordId/$fileName';
+                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => FullscreenVideoScreen(url: url)));
+                            } catch (e) {
+                              // debug logging removed
+                            }
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                    ),
+                  ],
+                ),
+              )
+            ],
             const Spacer(),
             Row(
               children: [
@@ -188,6 +399,78 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
             )
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A simple fullscreen video player screen used for previewing stored videos.
+class FullscreenVideoScreen extends StatefulWidget {
+  final String url;
+  const FullscreenVideoScreen({Key? key, required this.url}) : super(key: key);
+
+  @override
+  _FullscreenVideoScreenState createState() => _FullscreenVideoScreenState();
+}
+
+class _FullscreenVideoScreenState extends State<FullscreenVideoScreen> {
+  VideoPlayerController? _controller;
+  Future<void>? _initFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    try {
+      _controller = VideoPlayerController.network(widget.url);
+      _initFuture = _controller!.initialize().then((_) async {
+        try { await _controller?.setVolume(1.0); } catch (_) {}
+        try { await _controller?.setLooping(false); } catch (_) {}
+        _controller?.play();
+        setState(() {});
+      }).catchError((e) { /* ignore init errors - UI will show them */ });
+    } catch (e) {
+      // ignore create errors
+    }
+  }
+
+  @override
+  void dispose() {
+    try { _controller?.dispose(); } catch (_) {}
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(backgroundColor: Colors.black, elevation: 0),
+      body: Center(
+        child: _controller == null
+            ? const Text('No video', style: TextStyle(color: Colors.white))
+            : FutureBuilder<void>(
+                future: _initFuture,
+                builder: (context, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const CircularProgressIndicator();
+                  } else if (snap.hasError) {
+                    return Text('Failed to load: ${snap.error}', style: const TextStyle(color: Colors.white));
+                  } else if (_controller!.value.isInitialized) {
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          if (_controller!.value.isPlaying) _controller!.pause(); else _controller!.play();
+                        });
+                      },
+                      child: AspectRatio(
+                        aspectRatio: _controller!.value.aspectRatio,
+                        child: VideoPlayer(_controller!),
+                      ),
+                    );
+                  } else {
+                    return const Text('Video not available', style: TextStyle(color: Colors.white));
+                  }
+                },
+              ),
       ),
     );
   }

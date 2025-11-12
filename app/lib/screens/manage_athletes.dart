@@ -25,18 +25,9 @@ class _ManageAthletesScreenState extends State<ManageAthletesScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      print('ManageAthletes: loading for trainerId=${widget.trainerId}');
       final items = await _pb.fetchAthletesForTrainer(widget.trainerId);
-      print('ManageAthletes: fetched ${items.length} athletes from service');
-      // log a few entries for debugging
-      for (var i = 0; i < (items.length < 5 ? items.length : 5); i++) {
-        try {
-          final it = items[i] as Map<String,dynamic>;
-          print(' athlete[${i}] id=${it['id']} email=${it['email']} trainer_field=${it['trainer']}');
-        } catch (_) {}
-      }
-  setState(() => _athletes = items);
-  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Showing ${items.length} athletes')));
+      setState(() => _athletes = items);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Showing ${items.length} athletes')));
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Load failed: ${e.toString()}')));
     } finally {

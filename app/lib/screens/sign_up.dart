@@ -41,7 +41,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
       userId ??= (result['created'] != null ? (result['created']['id'] as String?) : null);
       if (userId == null) throw Exception('No user id returned after sign up');
       if (!mounted) return;
-      Navigator.of(context).pushReplacementNamed('/day', arguments: {'athleteId': userId});
+      // Navigate to trainer dashboard when creating a trainer account, otherwise to athlete day view
+      if (_role == 'trainer') {
+        Navigator.of(context).pushReplacementNamed('/trainer', arguments: {'trainerId': userId});
+      } else {
+        Navigator.of(context).pushReplacementNamed('/day', arguments: {'athleteId': userId});
+      }
     } catch (e) {
       if (!mounted) return;
       // Show detailed server error body when available for easier debugging

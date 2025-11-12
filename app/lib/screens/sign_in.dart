@@ -25,9 +25,7 @@ class _SignInScreenState extends State<SignInScreen> {
       if (data['record'] != null && data['record']['id'] != null) userId = data['record']['id'];
       userId ??= data['id'] as String?;
       // Debug: log extracted id and role for tracing
-      try {
-        print('SignIn: extracted userId=$userId role=$_role from auth response');
-      } catch (_) {}
+      // debug logging removed
       if (userId == null) throw Exception('No user id returned');
       if (!mounted) return;
       if (_role == 'trainer') {

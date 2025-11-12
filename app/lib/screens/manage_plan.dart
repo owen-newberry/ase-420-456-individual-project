@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/services.dart';
 import '../services/pocketbase_service.dart';
 
 class ManagePlanScreen extends StatefulWidget {
@@ -14,6 +16,9 @@ class ManagePlanScreen extends StatefulWidget {
 
 class _ManagePlanScreenState extends State<ManagePlanScreen> {
   final _pb = PocketBaseService();
+  // PocketBase instance for this project enforces a 5 MB limit on the `file` field.
+  // Keep this in-sync with the server schema. Value in bytes.
+  static const int _maxFileSizeBytes = 5242880; // 5 * 1024 * 1024
   DateTime _selected = DateTime.now();
   Map<String, dynamic>? _plan; // single plan for the selected date
   bool _loading = true;
@@ -243,6 +248,7 @@ class _ManagePlanScreenState extends State<ManagePlanScreen> {
                                 title: Text(ex['name'] ?? ''),
                                 subtitle: Text('Sets: ${ex['sets'] ?? ''} • Reps: ${ex['reps'] ?? ''}'),
                                 trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                                  IconButton(icon: const Icon(Icons.video_file), onPressed: () => _uploadVideoForExercise(i)),
                                   IconButton(icon: const Icon(Icons.edit), onPressed: () => _editExercise(i)),
                                   IconButton(icon: const Icon(Icons.delete), onPressed: () => _deleteExercise(i)),
                                 ]),
@@ -253,8 +259,7 @@ class _ManagePlanScreenState extends State<ManagePlanScreen> {
                       );
                     } catch (e) {
                       // Defensive: if parsing fails, surface a helpful message and log raw plan
-                      try { print('ManagePlan: failed to build exercises: $e'); } catch (_) {}
-                      try { print('ManagePlan: raw plan exercises=${_plan?['exercises']}'); } catch (_) {}
+                      // debug logging removed
                       return Center(child: Padding(
                         padding: const EdgeInsets.all(12.0),
                         child: Text('Unable to show plan — data appears malformed. You can add a new plan or contact admin.'),
@@ -284,4 +289,117 @@ class _ManagePlanScreenState extends State<ManagePlanScreen> {
       ),
     );
   }
-}
+
+  Future<void> _uploadVideoForExercise(int index) async {
+    if (_plan == null) return;
+    final exercises = _exercisesFromPlan(_plan);
+    if (index < 0 || index >= exercises.length) return;
+    final ex = exercises[index] as Map<String,dynamic>;
+    final titleCtrl = TextEditingController(text: '${ex['name'] ?? 'Exercise'} demo');
+    final descCtrl = TextEditingController(text: ex['description'] ?? '');
+    // Ask for title/description before opening file selector
+    final metaOk = await showDialog<bool>(context: context, builder: (ctx) {
+      return AlertDialog(
+        title: const Text('Video metadata'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: 'Title')),
+            const SizedBox(height: 8),
+            TextField(controller: descCtrl, decoration: const InputDecoration(labelText: 'Description')),
+            const SizedBox(height: 8),
+            // Show the max file size so trainers know upload limits before picking a file
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Max file size: ${(_maxFileSizeBytes / 1024 / 1024).toStringAsFixed(1)} MB', style: Theme.of(context).textTheme.bodySmall),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Continue')),
+        ],
+      );
+    });
+    if (metaOk != true) return;
+    // Pick the file first (some platforms return bytes instead of a filesystem path)
+    // Use file_selector which has better platform support and updated embedding.
+    XFile? xfile;
+    try {
+      final typeGroup = XTypeGroup(label: 'videos', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi']);
+      xfile = await openFile(acceptedTypeGroups: [typeGroup]);
+    } on MissingPluginException catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('File selector plugin not registered. Stop the app and run a full rebuild (flutter run) to enable native plugins.'),
+        ));
+      }
+      return;
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('File pick failed: ${e.toString()}')));
+      return;
+    }
+    if (xfile == null) return;
+  final title = titleCtrl.text.trim().isEmpty ? (ex['name'] ?? 'Video') : titleCtrl.text.trim();
+  final description = descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim();
+    try {
+      Map<String, dynamic> vid;
+      // Always read bytes from the picked file and upload them. Some Android
+      // pickers return content URIs or transient paths that MultipartFile.fromPath
+      // cannot handle; uploading from bytes is more reliable across platforms.
+  final bytes = await xfile.readAsBytes();
+  // Validate size against the server's configured max before attempting upload
+      if (bytes.length > _maxFileSizeBytes) {
+        final maxMb = (_maxFileSizeBytes / 1024 / 1024).toStringAsFixed(1);
+        final actualMb = (bytes.length / 1024 / 1024).toStringAsFixed(2);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Selected file is too large ($actualMb MB). Max is $maxMb MB. Please choose a smaller file or adjust server settings.')));
+        }
+        return;
+      }
+
+      // If the exercise already has a video record, attempt to update its file
+      // so we keep exactly one video per exercise. If the server doesn't allow
+      // updating the file on an existing record we fall back to creating a new
+      // record and replacing the reference.
+      if (ex['video'] != null && ex['video'] is Map && (ex['video']['id'] ?? ex['video']['_id']) != null) {
+        final existingId = (ex['video']['id'] ?? ex['video']['_id']) as String;
+        try {
+          final updated = await _pb.updateVideoFile(existingId, bytes: bytes, filename: xfile.name);
+          // update metadata if title/description changed
+          try {
+            await _pb.updateVideoMetadata(existingId, title: title, description: description);
+          } catch (_) {}
+          ex['video'] = updated;
+          _plan!['exercises'] = exercises;
+          await _savePlan();
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Video updated and attached')));
+        } catch (e) {
+          // Update failed (server may not support per-record file upload). Fall
+          // back to creating a new video record and replace the reference.
+          try {
+            final created = await _pb.uploadVideo(title, description: description, bytes: bytes, filename: xfile.name);
+            ex['video'] = created;
+            _plan!['exercises'] = exercises;
+            await _savePlan();
+            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Previous video replaced with a new upload')));
+          } catch (e2) {
+            rethrow;
+          }
+        }
+      } else {
+        // No existing video: create a new one normally
+        vid = await _pb.uploadVideo(title, description: description, bytes: bytes, filename: xfile.name);
+        // attach returned video info to the exercise so athlete UI can show it
+        ex['video'] = vid;
+        // write back and save the plan
+        _plan!['exercises'] = exercises;
+        await _savePlan();
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Video uploaded and attached')));
+      }
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed: ${e.toString()}')));
+      }
+    }
+  }
+

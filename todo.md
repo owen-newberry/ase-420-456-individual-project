@@ -1,6 +1,6 @@
 [] Logs
 
-[] Videos
+[x] Videos
 
 [] Dedicated Profile Page
 

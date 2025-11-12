@@ -63,7 +63,7 @@ class _TrainerDashboardState extends State<TrainerDashboard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text('Welcome, trainer', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  Text('Welcome, ${_displayName.isNotEmpty ? _displayName : 'trainer'}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 12),
                   ElevatedButton.icon(
                     onPressed: () {

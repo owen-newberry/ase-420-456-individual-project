@@ -36,34 +36,21 @@ class _DayViewState extends State<DayView> {
     // store resolved athlete id for later navigation (avoid reading widget.athleteId again)
     if (mounted) setState(() => _resolvedAthleteId = athleteId);
     if (athleteId == null || athleteId.isEmpty) {
-      // no athlete context — show sample
-      setState(() => _plan = _samplePlan(date));
+      // no athlete context — show empty (do not surface sample data)
+      setState(() => _plan = []);
       return;
     }
     try {
       final plans = await _pb.fetchPlanForDate(athleteId, date);
       if (!mounted) return;
-      if (plans.isEmpty) setState(() => _plan = _samplePlan(date)); else setState(() => _plan = plans);
+  if (plans.isEmpty) setState(() => _plan = []); else setState(() => _plan = plans);
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _plan = _samplePlan(date));
+  if (!mounted) return;
+  setState(() => _plan = []);
     }
   }
 
-  List<dynamic> _samplePlan(String date) {
-    return [
-      {
-        'id': 'sample-plan-1',
-        'date': date,
-        'title': 'Full Body Strength',
-        'exercises': [
-          { 'id': 'ex-1', 'name': 'Back Squat', 'sets': 5, 'reps': '5' },
-          { 'id': 'ex-2', 'name': 'Bench Press', 'sets': 5, 'reps': '5' },
-          { 'id': 'ex-3', 'name': 'Romanian Deadlift', 'sets': 3, 'reps': '8' },
-        ]
-      }
-    ];
-  }
+  // No sample plan — real data only
 
   void _loadProfile() async {
     try {

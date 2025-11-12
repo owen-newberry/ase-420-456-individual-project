@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+  <!--
+    Development/dev helper: allow cleartext HTTP to the emulator host (10.0.2.2)
+    so ExoPlayer and other media components can load http://10.0.2.2 resources
+    during local development. Keep this limited to the specific host.
+  -->
+  <domain-config cleartextTrafficPermitted="true">
+    <domain includeSubdomains="false">10.0.2.2</domain>
+  </domain-config>
+</network-security-config>
