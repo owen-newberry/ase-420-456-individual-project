@@ -193,11 +193,27 @@ class PocketBaseService {
   /// Fetch logs for a specific athlete/plan/exercise. Returns list of log records sorted by createdAt desc.
   Future<List<dynamic>> fetchLogsForExercise(String athleteId, String planId, String exerciseId, {int perPage = 20}) async {
     await _ensureTokenLoaded();
-    final filter = Uri.encodeQueryComponent('athlete = "$athleteId" && plan = "$planId" && exerciseId = "$exerciseId"');
-    final url = Uri.parse('$baseUrl/api/collections/logs/records?filter=$filter&perPage=$perPage&sort=-createdAt');
-    final res = await http.get(url, headers: _jsonHeaders);
-    if (res.statusCode != 200) _logAndThrow(res, 'Fetch logs');
-    final data = jsonDecode(res.body) as Map<String,dynamic>;
+
+    // First try: include the plan filter. This works when the server stores
+    // the `plan` relation as a single id value. If the server stores the
+    // relation as an array or another shape the filter may return no items,
+    // so we fall back to a broader query below.
+    final planFilter = Uri.encodeQueryComponent('athlete = "$athleteId" && plan = "$planId" && exerciseId = "$exerciseId"');
+    var url = Uri.parse('$baseUrl/api/collections/logs/records?filter=$planFilter&perPage=$perPage&sort=-createdAt');
+    var res = await http.get(url, headers: _jsonHeaders);
+    if (res.statusCode != 200) _logAndThrow(res, 'Fetch logs (plan filter)');
+    var data = jsonDecode(res.body) as Map<String,dynamic>;
+    var items = data['items'] as List<dynamic>? ?? [];
+
+    if (items.isNotEmpty) return items;
+
+    // Fallback: query by athlete + exercise only so we still obtain recent
+    // logs even if the `plan` filter didn't match due to relation shape.
+    final fallbackFilter = Uri.encodeQueryComponent('athlete = "$athleteId" && exerciseId = "$exerciseId"');
+    url = Uri.parse('$baseUrl/api/collections/logs/records?filter=$fallbackFilter&perPage=$perPage&sort=-createdAt');
+    res = await http.get(url, headers: _jsonHeaders);
+    if (res.statusCode != 200) _logAndThrow(res, 'Fetch logs (fallback)');
+    data = jsonDecode(res.body) as Map<String,dynamic>;
     return data['items'] as List<dynamic>? ?? [];
   }
 

@@ -20,6 +20,10 @@ class LogEntryScreen extends StatefulWidget {
 class _LogEntryScreenState extends State<LogEntryScreen> {
   final PocketBaseService _pb = PocketBaseService();
   String _displayName = '';
+  // When true, map historic saved weights to the last N sets when the
+  // saved log has fewer entries than the current plan's sets count. If
+  // false, saved weights will map to the first N sets.
+  final bool _mapSavedWeightsToLast = true;
 
   VideoPlayerController? _videoController;
   Future<void>? _initializeVideoFuture;
@@ -99,6 +103,7 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
             planSets = _pb.normalizeSetsField(setsRaw);
           }
 
+
           if (planSets.isNotEmpty) {
             for (var i = 0; i < _setsCount && i < planSets.length; i++) {
               try {
@@ -122,16 +127,35 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
       final latest = logs.first as Map<String, dynamic>;
       final savedSets = _pb.normalizeSetsField(latest['sets']);
       if (savedSets.isEmpty) return;
-      for (var i = 0; i < _setsCount && i < savedSets.length; i++) {
-        try {
-          final s = savedSets[i];
-          double w = 0.0;
-          if (s['weight'] != null) {
-            w = (s['weight'] is num) ? (s['weight'] as num).toDouble() : double.tryParse(s['weight'].toString()) ?? 0.0;
+      // Map saved sets into the current controllers. If the saved log has
+      // fewer entries than the plan's `_setsCount`, we map them to the last
+      // N sets by default (so a single previous weight fills the final set),
+      // which often matches athlete expectations. Toggle
+      // `_mapSavedWeightsToLast` to change this behavior.
+      try {
+        final savedLen = savedSets.length;
+        if (_mapSavedWeightsToLast) {
+          // Start position so last savedLen entries align to the tail.
+          final start = (_setsCount - savedLen) > 0 ? (_setsCount - savedLen) : 0;
+          for (var i = 0; i < savedLen && (start + i) < _setsCount; i++) {
+            final s = savedSets[i];
+            double w = 0.0;
+            if (s['weight'] != null) {
+              w = (s['weight'] is num) ? (s['weight'] as num).toDouble() : double.tryParse(s['weight'].toString()) ?? 0.0;
+            }
+            _weightControllers[start + i].text = w == 0.0 ? '' : w.toString();
           }
-          _weightControllers[i].text = w == 0.0 ? '' : w.toString();
-        } catch (_) {}
-      }
+        } else {
+          for (var i = 0; i < _setsCount && i < savedLen; i++) {
+            final s = savedSets[i];
+            double w = 0.0;
+            if (s['weight'] != null) {
+              w = (s['weight'] is num) ? (s['weight'] as num).toDouble() : double.tryParse(s['weight'].toString()) ?? 0.0;
+            }
+            _weightControllers[i].text = w == 0.0 ? '' : w.toString();
+          }
+        }
+      } catch (_) {}
       setState(() {});
     } catch (_) {
       // ignore fetch errors
@@ -207,16 +231,12 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
       return;
     }
     try {
-      final created = await _pb.createLog(widget.athleteId, widget.planId, widget.exerciseId, sets);
-      // Show the created record so we can confirm how weights were stored on the server
+  await _pb.createLog(widget.athleteId, widget.planId, widget.exerciseId, sets);
+      // Print the server response for debugging and optionally show it in a dialog
       if (!mounted) return;
-      await showDialog<void>(context: context, builder: (_) {
-        return AlertDialog(
-          title: const Text('Saved log (server response)'),
-          content: SingleChildScrollView(child: SelectableText(const JsonEncoder.withIndent('  ').convert(created))),
-          actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))],
-        );
-      });
+      // simple confirmation
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Log saved')));
+
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
