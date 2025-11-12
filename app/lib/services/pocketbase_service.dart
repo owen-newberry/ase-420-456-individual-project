@@ -10,7 +10,9 @@ class PocketBaseService {
   String baseUrl;
 
   String? _authToken;
+  String? _currentUserId;
   static const String _tokenKey = 'pb_token';
+  static const String _userIdKey = 'pb_user_id';
   bool _tokenLoaded = false;
 
   // Singleton instance
@@ -42,6 +44,7 @@ class PocketBaseService {
     try {
       final sp = await SharedPreferences.getInstance();
       _authToken = sp.getString(_tokenKey);
+      _currentUserId = sp.getString(_userIdKey);
       _tokenLoaded = true;
     } catch (_) {
       // ignore failures to restore
@@ -54,6 +57,7 @@ class PocketBaseService {
     try {
       final sp = await SharedPreferences.getInstance();
       _authToken = sp.getString(_tokenKey);
+      _currentUserId = sp.getString(_userIdKey);
     } catch (_) {}
     _tokenLoaded = true;
   }
@@ -88,10 +92,18 @@ class PocketBaseService {
       // ignore parsing issues here; token may remain null
     }
     _authToken = token;
+    // try extract user id from response record
+    try {
+      String? userId;
+      if (data['record'] != null && data['record']['id'] != null) userId = data['record']['id'] as String?;
+      userId ??= data['id'] as String?;
+      _currentUserId = userId;
+    } catch (_) {}
     // persist token for later app restarts
     try {
       final sp = await SharedPreferences.getInstance();
       if (_authToken != null) await sp.setString(_tokenKey, _authToken!);
+      if (_currentUserId != null) await sp.setString(_userIdKey, _currentUserId!);
     } catch (_) {}
     return data;
   }
@@ -134,19 +146,28 @@ class PocketBaseService {
 
   Future<void> signOut() async {
     _authToken = null;
+    _currentUserId = null;
     try {
       final sp = await SharedPreferences.getInstance();
       await sp.remove(_tokenKey);
+      await sp.remove(_userIdKey);
     } catch (_) {}
+  }
+
+  /// Return the currently persisted user id (if any). Loads persisted token/user id if not loaded.
+  Future<String?> getCurrentUserId() async {
+    await _ensureTokenLoaded();
+    return _currentUserId;
   }
 
   /// Fetch all plans for a given athlete on a specific date (YYYY-MM-DD).
   Future<List<dynamic>> fetchPlanForDate(String athleteId, String date) async {
+    await _ensureTokenLoaded();
     final filter = Uri.encodeQueryComponent('athlete = "$athleteId" && date = "$date"');
     final url = Uri.parse('$baseUrl/api/collections/plans/records?filter=$filter');
-    final res = await http.get(url, headers: _jsonHeaders);
-    if (res.statusCode != 200) throw HttpException('Fetch plans failed: ${res.statusCode}');
-    final data = jsonDecode(res.body) as Map<String,dynamic>;
+  final res = await http.get(url, headers: _jsonHeaders);
+  if (res.statusCode != 200) _logAndThrow(res, 'Fetch plans');
+  final data = jsonDecode(res.body) as Map<String,dynamic>;
     // PocketBase returns items in `items` for list endpoints
     return data['items'] as List<dynamic>? ?? [];
   }
@@ -160,7 +181,9 @@ class PocketBaseService {
       'athlete': athleteId,
       'plan': planId,
       'exerciseId': exerciseId,
-      'sets': sets,
+      // PocketBase schema stores `sets` as serialized JSON text in our project.
+      // Ensure we stringify lists/maps so the DB consistently stores a text blob.
+      'sets': (sets is String) ? sets : jsonEncode(sets),
       'createdAt': DateTime.now().toIso8601String(),
     });
     final res = await http.post(url, headers: _jsonHeaders, body: body);
@@ -392,10 +415,12 @@ class PocketBaseService {
     await _ensureTokenLoaded();
     if (_authToken == null) throw HttpException('Not authenticated: please sign in to create plans');
     final url = Uri.parse('$baseUrl/api/collections/plans/records');
+    // Ensure exercises is stored as a JSON string in the DB for consistency
+    final exercisesField = (exercises is String) ? exercises : jsonEncode(exercises);
     final body = jsonEncode({
       'athlete': athleteId,
       'date': date,
-      'exercises': exercises,
+      'exercises': exercisesField,
       if (createdBy != null) 'createdBy': createdBy,
       'createdAt': DateTime.now().toIso8601String(),
     });
@@ -414,7 +439,22 @@ class PocketBaseService {
     final url = Uri.parse('$baseUrl/api/collections/plans/records/$planId');
     final headers = Map<String,String>.from(_jsonHeaders);
     headers['Content-Type'] = 'application/json';
-    final res = await http.patch(url, headers: headers, body: jsonEncode(updates));
+    // Ensure exercises is serialized as a JSON string when present in updates
+    final updatesCopy = Map<String, dynamic>.from(updates);
+    if (updatesCopy.containsKey('exercises')) {
+      final ex = updatesCopy['exercises'];
+      if (ex is String) {
+        // leave as-is
+      } else {
+        try {
+          updatesCopy['exercises'] = jsonEncode(ex);
+        } catch (_) {
+          // fallback: ensure a safe empty array string rather than null
+          updatesCopy['exercises'] = '[]';
+        }
+      }
+    }
+    final res = await http.patch(url, headers: headers, body: jsonEncode(updatesCopy));
     if (res.statusCode != 200) _logAndThrow(res, 'Update plan');
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
@@ -447,6 +487,71 @@ class PocketBaseService {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  /// Fetch templates created by a trainer (optionally filter by trainer id)
+  Future<List<dynamic>> fetchTemplatesForTrainer(String trainerId, {int perPage = 200}) async {
+    final filter = Uri.encodeQueryComponent('createdBy = "$trainerId"');
+    final url = Uri.parse('$baseUrl/api/collections/templates/records?filter=$filter&perPage=$perPage');
+    await _ensureTokenLoaded();
+    if (_authToken == null) throw HttpException('Not authenticated: please sign in to fetch templates');
+    final res = await http.get(url, headers: _jsonHeaders);
+    if (res.statusCode != 200) _logAndThrow(res, 'Fetch templates');
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    return data['items'] as List<dynamic>? ?? [];
+  }
+
+  /// Create a template. `exercises` will be serialized to JSON text in the DB.
+  Future<Map<String, dynamic>> createTemplate(String name, List<dynamic> exercises, {String? createdBy}) async {
+    await _ensureTokenLoaded();
+    if (_authToken == null) throw HttpException('Not authenticated: please sign in to create templates');
+    final url = Uri.parse('$baseUrl/api/collections/templates/records');
+    final exercisesField = (exercises is String) ? exercises : jsonEncode(exercises);
+    final body = jsonEncode({
+      'name': name,
+      'createdBy': createdBy,
+      'exercises': exercisesField,
+      'createdAt': DateTime.now().toIso8601String(),
+    });
+    final headers = Map<String,String>.from(_jsonHeaders);
+    headers['Content-Type'] = 'application/json';
+    final res = await http.post(url, headers: headers, body: body);
+    if (res.statusCode != 200 && res.statusCode != 201) _logAndThrow(res, 'Create template');
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  /// Update an existing template. Ensures `exercises` field is serialized.
+  Future<Map<String, dynamic>> updateTemplate(String templateId, Map<String, dynamic> updates) async {
+    await _ensureTokenLoaded();
+    if (_authToken == null) throw HttpException('Not authenticated: please sign in to update templates');
+    final url = Uri.parse('$baseUrl/api/collections/templates/records/$templateId');
+    final headers = Map<String,String>.from(_jsonHeaders);
+    headers['Content-Type'] = 'application/json';
+    final updatesCopy = Map<String, dynamic>.from(updates);
+    if (updatesCopy.containsKey('exercises')) {
+      final ex = updatesCopy['exercises'];
+      if (ex is String) {
+        // leave as-is
+      } else {
+        try {
+          updatesCopy['exercises'] = jsonEncode(ex);
+        } catch (_) {
+          updatesCopy['exercises'] = '[]';
+        }
+      }
+    }
+    final res = await http.patch(url, headers: headers, body: jsonEncode(updatesCopy));
+    if (res.statusCode != 200) _logAndThrow(res, 'Update template');
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  /// Delete a template by id.
+  Future<void> deleteTemplate(String templateId) async {
+    await _ensureTokenLoaded();
+    if (_authToken == null) throw HttpException('Not authenticated: please sign in to delete templates');
+    final url = Uri.parse('$baseUrl/api/collections/templates/records/$templateId');
+    final res = await http.delete(url, headers: _jsonHeaders);
+    if (res.statusCode != 200 && res.statusCode != 204) _logAndThrow(res, 'Delete template');
+  }
+
   /// Apply a template to an athlete by creating plan records for each day
   /// in the period starting at [startDate] for [weeks] weeks. This implementation
   /// creates one plan per day (weeks * 7 plans) using the template.exercises array.
@@ -462,11 +567,43 @@ class PocketBaseService {
       exercises = [];
     }
 
+    // If exercises include a `day` property (0=Sunday..6=Saturday), respect it
+    // and only create plans on matching weekdays. If no exercise has `day`,
+    // place the full exercise list on the first day of each week only.
+  final anyHasDay = exercises.any((e) => e is Map && e.containsKey('day'));
     final totalDays = weeks * 7;
     for (var i = 0; i < totalDays; i++) {
       final date = startDate.add(Duration(days: i));
       final dateStr = date.toIso8601String().split('T').first;
-      await createPlan(athleteId, dateStr, exercises, createdBy: createdBy);
+
+      final dayIndex = date.weekday % 7; // DateTime.weekday: Mon=1..Sun=7 -> map Sun->0
+
+      List<dynamic> todays = [];
+      if (anyHasDay) {
+        for (final e in exercises) {
+          try {
+            if (e is Map) {
+              final rawDay = e['day'];
+              if (rawDay == null) continue;
+              int? d;
+              if (rawDay is int) d = rawDay;
+              else {
+                d = int.tryParse(rawDay.toString());
+              }
+              if (d != null && d == dayIndex) todays.add(e);
+            }
+          } catch (_) {}
+        }
+      } else {
+        // No day tags: treat the first day of each 7-day block as the template day
+        if ((i % 7) == 0) {
+          todays = List<dynamic>.from(exercises);
+        }
+      }
+
+      if (todays.isNotEmpty) {
+        await createPlan(athleteId, dateStr, todays, createdBy: createdBy);
+      }
     }
   }
 

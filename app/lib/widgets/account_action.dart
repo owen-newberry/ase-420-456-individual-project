@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../screens/sign_in.dart';
+import '../screens/select_role.dart';
 import '../services/pocketbase_service.dart';
 
 class AccountAction extends StatelessWidget {
@@ -28,7 +28,7 @@ class AccountAction extends StatelessWidget {
             await PocketBaseService().signOut();
           } catch (_) {}
           Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const SignInScreen()), (r) => false);
+              MaterialPageRoute(builder: (_) => const SelectRoleScreen()), (r) => false);
         } else if (v == 'profile') {
           // For now show a simple dialog
           showDialog(
