@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import '../services/pocketbase_service.dart';
 
 class SignUpScreen extends StatefulWidget {
-  const SignUpScreen({Key? key}) : super(key: key);
+  final String? initialRole; // if provided, lock role to this value
+  const SignUpScreen({Key? key, this.initialRole}) : super(key: key);
 
   @override
   _SignUpScreenState createState() => _SignUpScreenState();
@@ -52,6 +53,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.initialRole != null && widget.initialRole!.isNotEmpty) {
+      _role = widget.initialRole!;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Create Account')),
@@ -62,22 +71,24 @@ class _SignUpScreenState extends State<SignUpScreen> {
             children: [
               TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'Display name (optional)')),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Text('Role:'),
-                  const SizedBox(width: 12),
-                  DropdownButton<String>(
-                    value: _role,
-                    items: const [
-                      DropdownMenuItem(value: 'athlete', child: Text('Athlete')),
-                      DropdownMenuItem(value: 'trainer', child: Text('Trainer')),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) setState(() => _role = v);
-                    },
-                  ),
-                ],
-              ),
+              // If initialRole supplied, hide role selector and use that role.
+              if (widget.initialRole == null)
+                Row(
+                  children: [
+                    const Text('Role:'),
+                    const SizedBox(width: 12),
+                    DropdownButton<String>(
+                      value: _role,
+                      items: const [
+                        DropdownMenuItem(value: 'athlete', child: Text('Athlete')),
+                        DropdownMenuItem(value: 'trainer', child: Text('Trainer')),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) setState(() => _role = v);
+                      },
+                    ),
+                  ],
+                ),
               TextField(controller: _emailController, decoration: const InputDecoration(labelText: 'Email')),
               TextField(controller: _passwordController, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
               TextField(controller: _confirmController, decoration: const InputDecoration(labelText: 'Confirm password'), obscureText: true),

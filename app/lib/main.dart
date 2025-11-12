@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'screens/dayView.dart';
 import 'screens/logEntry.dart';
-import 'screens/sign_in.dart';
 import 'screens/sign_up.dart';
+import 'screens/select_role.dart';
+import 'screens/trainer_dashboard.dart';
 // Dev helper: set to true to bypass sign-in and open DayView with a test athlete id.
-const bool kBypassSignIn = true;
+// Set to false so app opens the sign-in/sign-up flow by default.
+const bool kBypassSignIn = false;
 const String kDevAthleteId = 'dev-athlete-id-0001';
 
 void main() {
@@ -19,15 +21,23 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'DNA Sports Center',
       theme: ThemeData(primarySwatch: Colors.blue),
-  home: kBypassSignIn ? DayView(athleteId: kDevAthleteId) : const SignInScreen(),
+  home: kBypassSignIn ? DayView(athleteId: kDevAthleteId) : const SelectRoleScreen(),
       onGenerateRoute: (settings) {
         if (settings.name == '/day') {
           final args = settings.arguments as Map<String, dynamic>?;
           final athleteId = args != null ? args['athleteId'] as String? : null;
           return MaterialPageRoute(builder: (_) => DayView(athleteId: athleteId ?? ''));
         }
+        if (settings.name == '/trainer') {
+          final args = settings.arguments as Map<String, dynamic>?;
+          final trainerId = args != null ? args['trainerId'] as String? : null;
+          if (trainerId == null) return null;
+          return MaterialPageRoute(builder: (_) => TrainerDashboard(trainerId: trainerId));
+        }
         if (settings.name == '/signup') {
-          return MaterialPageRoute(builder: (_) => const SignUpScreen());
+          final args = settings.arguments as Map<String, dynamic>?;
+          final role = args != null ? args['role'] as String? : null;
+          return MaterialPageRoute(builder: (_) => SignUpScreen(initialRole: role));
         }
         if (settings.name == '/log') {
           final args = settings.arguments as Map<String, dynamic>?;
