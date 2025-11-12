@@ -1,0 +1,10 @@
+services:
+  pocketbase:
+    # Official PocketBase image on GitHub Container Registry
+    image: elestio/pocketbase:latest
+    container_name: pocketbase
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./pb_data:/pb_data
+    restart: unless-stopped

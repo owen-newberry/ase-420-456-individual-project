@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/athleteService.dart';
 import '../models/athlete.dart';
+import '../widgets/account_action.dart';
 
 class AdminDashboard extends StatefulWidget {
   @override
@@ -27,7 +28,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Admin Dashboard')),
+      appBar: AppBar(title: Text('Admin Dashboard'), actions: [Padding(padding: const EdgeInsets.only(right:8.0), child: AccountAction())]),
       body: ListView.builder(
         itemCount: athletes.length,
         itemBuilder: (context, index) {

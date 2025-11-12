@@ -1,0 +1,76 @@
+{
+  "collections": [
+    {
+      "id": "pb_templates",
+      "name": "templates",
+      "type": "base",
+      "system": false,
+      "schema": [
+        { "name": "name", "type": "text", "required": true },
+        { "name": "createdBy", "type": "relation", "options": { "collectionId": "_pb_users", "maxSelect": 1 } },
+        { "name": "exercises", "type": "text", "required": false, "options": {} },
+        { "name": "createdAt", "type": "datetime", "required": false }
+      ],
+      "listRule": null,
+      "viewRule": null,
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "id": "pb_plans",
+      "name": "plans",
+      "type": "base",
+      "system": false,
+      "schema": [
+        { "name": "athlete", "type": "relation", "options": { "collectionId": "_pb_users", "maxSelect": 1 } },
+        { "name": "date", "type": "text", "required": true },
+        { "name": "exercises", "type": "text", "required": false },
+        { "name": "createdBy", "type": "relation", "options": { "collectionId": "_pb_users", "maxSelect": 1 } },
+        { "name": "createdAt", "type": "datetime", "required": false }
+      ],
+      "listRule": null,
+      "viewRule": null,
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "id": "pb_logs",
+      "name": "logs",
+      "type": "base",
+      "system": false,
+      "schema": [
+        { "name": "athlete", "type": "relation", "options": { "collectionId": "_pb_users", "maxSelect": 1 } },
+        { "name": "plan", "type": "relation", "options": { "collectionId": "pb_plans", "maxSelect": 1 } },
+        { "name": "exerciseId", "type": "text" },
+        { "name": "sets", "type": "text" },
+        { "name": "createdAt", "type": "datetime", "required": false }
+      ],
+      "listRule": null,
+      "viewRule": null,
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    },
+    {
+      "id": "pb_videos",
+      "name": "videos",
+      "type": "base",
+      "system": false,
+      "schema": [
+        { "name": "title", "type": "text", "required": true },
+        { "name": "description", "type": "text" },
+        { "name": "file", "type": "file" },
+        { "name": "thumbnailUrl", "type": "text" },
+        { "name": "uploadedBy", "type": "relation", "options": { "collectionId": "_pb_users", "maxSelect": 1 } },
+        { "name": "createdAt", "type": "datetime", "required": false }
+      ],
+      "listRule": null,
+      "viewRule": null,
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null
+    }
+  ]
+}
