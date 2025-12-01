@@ -18,3 +18,4 @@ hugo --minify
 ```
 
 To preview the production build, run `hugo server --bind 127.0.0.1 --baseURL "https://your-base-url/"`.
+# Trigger rebuild
