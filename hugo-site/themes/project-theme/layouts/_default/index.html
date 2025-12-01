@@ -1,0 +1,34 @@
+{{ define "main" }}
+  <section class="hero">
+    <div class="hero-inner">
+      <h1>{{ .Site.Title }}</h1>
+      <p class="lead">A lightweight workout planner and logger tailored for DNA Sports Center.</p>
+      <p class="hero-actions">
+        <a class="btn primary" href="{{ "/documentation/" | absURL }}">View Documentation</a>
+        <a class="btn" href="{{ .Site.Params.github | absURL }}" target="_blank">View on GitHub</a>
+      </p>
+    </div>
+  </section>
+
+  <section class="features">
+    <h2>Features</h2>
+    <div class="cards">
+      {{ $features := slice "Workout logging" "Recurring scheduling" "Templates" "Video embedding" "Prefill & caching" "Lightweight backend" }}
+      {{ range $i, $f := $features }}
+        <article class="card">
+          <h3>{{ $f }}</h3>
+          <p>Short description of {{ $f }} feature.</p>
+        </article>
+      {{ end }}
+    </div>
+  </section>
+
+  <section class="tech-stack">
+    <h2>Technology Stack</h2>
+    <ul class="tech-list">
+      <li>Flutter (cross-platform frontend)</li>
+      <li>PocketBase (backend)</li>
+      <li>Hugo (docs site)</li>
+    </ul>
+  </section>
+{{ end }}

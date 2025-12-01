@@ -1,0 +1,21 @@
+baseURL = "https://owen-newberry.github.io/forge-workout/"
+languageCode = "en-us"
+title = "Forge Workout Documentation"
+theme = "project-theme"
+
+[params]
+  github = "https://github.com/owen-newberry/forge-workout"
+
+[menu]
+  [[menu.main]]
+    name = "Home"
+    url = "/"
+    weight = 1
+  [[menu.main]]
+    name = "Documentation"
+    url = "/documentation/"
+    weight = 2
+  [[menu.main]]
+    name = "About"
+    url = "/about/"
+    weight = 3

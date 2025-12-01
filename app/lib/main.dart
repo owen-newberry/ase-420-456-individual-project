@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'utils/route_observer.dart';
 import 'screens/dayView.dart';
 import 'screens/logEntry.dart';
 import 'screens/sign_up.dart';
@@ -9,6 +10,7 @@ import 'screens/trainer_dashboard.dart';
 const bool kBypassSignIn = false;
 const String kDevAthleteId = 'dev-athlete-id-0001';
 
+// A RouteObserver so screens can know when they become visible again
 void main() {
   runApp(MyApp());
 }
@@ -74,6 +76,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'DNA Sports Center',
       theme: theme,
+      navigatorObservers: [routeObserver],
   home: kBypassSignIn ? DayView(athleteId: kDevAthleteId) : const SelectRoleScreen(),
       onGenerateRoute: (settings) {
         if (settings.name == '/day') {

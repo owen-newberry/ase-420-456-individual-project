@@ -1,0 +1,19 @@
+{{ define "main" }}
+  <h1>{{ .Title }}</h1>
+  <p>{{ .Description }}</p>
+
+  {{ range .Params.pdfs }}
+    <article class="doc-card">
+      <h2>{{ .title }}</h2>
+      <p class="doc-desc">{{ .description }}</p>
+      <div class="pdf-viewer">
+        <iframe src="{{ (printf "pdfs/%s" .filename) | absURL }}#toolbar=0" type="application/pdf" width="100%" height="600px" frameborder="0" style="border: none;"></iframe>
+      </div>
+      <p class="doc-actions">
+        <a class="btn" href="{{ (printf "pdfs/%s" .filename) | absURL }}" download>Download PDF</a>
+      </p>
+    </article>
+  {{ end }}
+
+  <p class="back-home"><a href="{{ .Site.BaseURL }}">Return to Home</a></p>
+{{ end }}

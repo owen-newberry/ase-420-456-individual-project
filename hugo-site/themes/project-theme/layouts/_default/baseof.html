@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ if .Title }}{{ .Title }} | {{ end }}{{ .Site.Title }}</title>
+    <link rel="stylesheet" href="{{ "css/style.css" | absURL }}">
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="brand"><a href="{{ .Site.BaseURL }}">{{ .Site.Title }}</a></div>
+        <nav class="main-nav">
+          <ul>
+            {{ range .Site.Menus.main }}
+              <li><a href="{{ .URL | absURL }}">{{ .Name }}</a></li>
+            {{ end }}
+          </ul>
+        </nav>
+      </div>
+    </header>
+
+    <main class="site-main container">
+      {{ block "main" . }}{{ end }}
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p>&copy; {{ now.Format "2006" }} {{ .Site.Title }} — <a href="{{ .Site.Params.github | absURL }}">GitHub</a></p>
+      </div>
+    </footer>
+  </body>
+</html>

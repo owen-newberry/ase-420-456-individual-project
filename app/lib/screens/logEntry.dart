@@ -2,8 +2,10 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:video_player/video_player.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/pocketbase_service.dart';
 import '../widgets/account_action.dart';
+import 'package:app/utils/route_observer.dart';
 
 class LogEntryScreen extends StatefulWidget {
   final String athleteId;
@@ -17,7 +19,7 @@ class LogEntryScreen extends StatefulWidget {
   _LogEntryScreenState createState() => _LogEntryScreenState();
 }
 
-class _LogEntryScreenState extends State<LogEntryScreen> {
+class _LogEntryScreenState extends State<LogEntryScreen> with RouteAware {
   final PocketBaseService _pb = PocketBaseService();
   String _displayName = '';
   // When true, map historic saved weights to the last N sets when the
@@ -41,16 +43,59 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
     _loadProfile();
     _initVideoIfNeeded();
     _populateSavedWeights();
+    debugPrint('LogEntry: initState completed for exerciseId=${widget.exerciseId} setsCount=$_setsCount');
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // subscribe to route changes so we can refresh when returning to this screen
+    try {
+      final route = ModalRoute.of(context);
+      if (route != null) {
+        // subscribe using the shared routeObserver util
+        routeObserver.subscribe(this, route as PageRoute<dynamic>);
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    try {
+      routeObserver.unsubscribe(this);
+    } catch (_) {}
+    for (final c in _weightControllers) {
+      c.dispose();
+    }
+    try { _videoController?.dispose(); } catch (_) {}
+    super.dispose();
+  }
+
+  @override
+  void didPopNext() {
+    // Called when a covered route has been popped and this route shows again.
+    // Refresh saved weights so UI reflects the latest DB state.
+    _populateSavedWeights();
   }
 
   Future<void> _populateSavedWeights() async {
+    debugPrint('LogEntry: _populateSavedWeights() called for exerciseId=${widget.exerciseId}');
     // Prefer parsing planned sets from the plan record every time the page
     // loads. This allows the app to show the intended weights/sets defined
     // in the plan itself. If the plan doesn't include weights, we still
     // leave boxes empty so athletes can enter values.
     try {
-      final plan = await _pb.getPlanById(widget.planId);
-      var exercisesRaw = plan['exercises'];
+      // Ensure controllers match current sets count before populating
+      _ensureControllersCount();
+
+      Map<String, dynamic>? plan;
+      try {
+        plan = await _pb.getPlanById(widget.planId);
+      } catch (e) {
+        debugPrint('LogEntry: getPlanById failed: $e');
+        plan = null;
+      }
+      var exercisesRaw = plan?['exercises'];
       List<dynamic> exercises = [];
       if (exercisesRaw is String) {
         try {
@@ -105,6 +150,12 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
 
 
           if (planSets.isNotEmpty) {
+            // If the plan spelled out template sets, adjust controllers
+            if (planSets.length > 0) {
+              _setsCount = planSets.length;
+              _ensureControllersCount();
+            }
+                debugPrint('LogEntry: planSets.length=${planSets.length}, _setsCount=$_setsCount');
             for (var i = 0; i < _setsCount && i < planSets.length; i++) {
               try {
                 final s = planSets[i];
@@ -112,7 +163,8 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
                 if (s['weight'] != null) {
                   w = (s['weight'] is num) ? (s['weight'] as num).toDouble() : double.tryParse(s['weight'].toString()) ?? 0.0;
                 }
-                _weightControllers[i].text = w == 0.0 ? '' : w.toString();
+                    _weightControllers[i].text = w == 0.0 ? '' : w.toString();
+                    debugPrint('LogEntry: setting controller[$i] from plan weight=$w');
               } catch (_) {}
             }
             setState(() {});
@@ -122,10 +174,86 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
       }
 
       // If plan didn't provide template weights, fall back to most recent saved log
-      final logs = await _pb.fetchLogsForExercise(widget.athleteId, widget.planId, widget.exerciseId, perPage: 1);
+      // First check for a short-lived local cache written immediately after
+      // a successful save. This avoids being blocked by occasional server
+      // list endpoint failures and ensures the UI pre-fills immediately
+      // after saving on the same device/emulator.
+      try {
+        final sp = await SharedPreferences.getInstance();
+        final key = 'last_log_${widget.athleteId}_${widget.exerciseId}';
+        try {
+          // Diagnostic: list keys so we can verify whether the expected
+          // cache entry exists on the device/emulator.
+          final allKeys = sp.getKeys();
+          debugPrint('LogEntry: SharedPreferences keys=${allKeys.toList()}');
+        } catch (_) {}
+        debugPrint('LogEntry: cache read attempting key=$key');
+        final cached = sp.getString(key);
+        debugPrint('LogEntry: cache raw=${cached ?? '<null>'}');
+        if (cached != null && cached.isNotEmpty) {
+          try {
+            final parsed = jsonDecode(cached);
+            final cachedSets = _pb.normalizeSetsField(parsed);
+            debugPrint('LogEntry: using cached savedSets count=${cachedSets.length}');
+            if (cachedSets.isNotEmpty) {
+              final savedLen = cachedSets.length;
+              if (savedLen > 0) {
+                // If cached sets count differs from current controllers, adjust
+                if (savedLen != _setsCount) {
+                  _setsCount = savedLen;
+                  _ensureControllersCount();
+                }
+                for (var i = 0; i < _setsCount && i < savedLen; i++) {
+                  try {
+                    final s = cachedSets[i];
+                    double w = 0.0;
+                    if (s['weight'] != null) {
+                      w = (s['weight'] is num) ? (s['weight'] as num).toDouble() : double.tryParse(s['weight'].toString()) ?? 0.0;
+                    }
+                    _weightControllers[i].text = w == 0.0 ? '' : w.toString();
+                    debugPrint('LogEntry: mapping cachedSets[$i].weight=$w -> controller[$i]');
+                  } catch (_) {}
+                }
+                setState(() {});
+                return;
+              }
+            }
+          } catch (_) {}
+        }
+      } catch (e) {
+        debugPrint('LogEntry: cache read failed: $e');
+      }
+
+      List<dynamic> logs = [];
+      try {
+        logs = await _pb.fetchLogsForExercise(widget.athleteId, widget.planId, widget.exerciseId, perPage: 1);
+      } catch (e) {
+        debugPrint('LogEntry: fetchLogsForExercise failed: $e');
+        logs = [];
+      }
+      debugPrint('LogEntry: fetched logs count=${logs.length}');
       if (logs.isEmpty) return;
       final latest = logs.first as Map<String, dynamic>;
-      final savedSets = _pb.normalizeSetsField(latest['sets']);
+      // Support a few shapes where `sets` might live (direct field, nested
+      // inside `data`, or inside a `record` wrapper). Normalize helper will
+      // decode stringified JSON as needed.
+      dynamic setsField;
+      if (latest.containsKey('sets')) setsField = latest['sets'];
+      else if (latest.containsKey('data') && latest['data'] is Map && latest['data'].containsKey('sets')) setsField = latest['data']['sets'];
+      else if (latest.containsKey('record') && latest['record'] is Map && latest['record'].containsKey('sets')) setsField = latest['record']['sets'];
+      else setsField = null;
+
+      final savedSets = _pb.normalizeSetsField(setsField);
+      debugPrint('LogEntry: fetched latest sets count=${savedSets.length} raw=$setsField');
+      // If the stored log used a numeric sets count rather than a list, try
+      // to derive controller count from it.
+      if ((setsField is num) || (setsField is String && int.tryParse(setsField) != null)) {
+        final parsedCount = (setsField is num) ? setsField.toInt() : int.tryParse(setsField) ?? _setsCount;
+        if (parsedCount > 0 && parsedCount != _setsCount) {
+          _setsCount = parsedCount;
+          _ensureControllersCount();
+        }
+      }
       if (savedSets.isEmpty) return;
       // Map saved sets into the current controllers. If the saved log has
       // fewer entries than the plan's `_setsCount`, we map them to the last
@@ -144,6 +272,7 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
               w = (s['weight'] is num) ? (s['weight'] as num).toDouble() : double.tryParse(s['weight'].toString()) ?? 0.0;
             }
             _weightControllers[start + i].text = w == 0.0 ? '' : w.toString();
+            debugPrint('LogEntry: mapping savedSets[$i].weight=$w -> controller[${start + i}]');
           }
         } else {
           for (var i = 0; i < _setsCount && i < savedLen; i++) {
@@ -153,6 +282,7 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
               w = (s['weight'] is num) ? (s['weight'] as num).toDouble() : double.tryParse(s['weight'].toString()) ?? 0.0;
             }
             _weightControllers[i].text = w == 0.0 ? '' : w.toString();
+            debugPrint('LogEntry: mapping savedSets[$i].weight=$w -> controller[$i]');
           }
         }
       } catch (_) {}
@@ -160,6 +290,28 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
     } catch (_) {
       // ignore fetch errors
     }
+  }
+
+  /// Ensure `_weightControllers` has exactly `_setsCount` entries.
+  /// Preserve existing controller values where possible and dispose
+  /// any surplus controllers when shrinking.
+  void _ensureControllersCount() {
+    if (_weightControllers.length == _setsCount) return;
+    final newList = <TextEditingController>[];
+    final minLen = _weightControllers.length < _setsCount ? _weightControllers.length : _setsCount;
+    for (var i = 0; i < minLen; i++) {
+      newList.add(_weightControllers[i]);
+    }
+    for (var i = minLen; i < _setsCount; i++) {
+      newList.add(TextEditingController());
+    }
+    // dispose any extra controllers that won't be preserved
+    if (_weightControllers.length > _setsCount) {
+      for (var i = _setsCount; i < _weightControllers.length; i++) {
+        try { _weightControllers[i].dispose(); } catch (_) {}
+      }
+    }
+    _weightControllers = newList;
   }
 
   void _initFromExercise() {
@@ -231,14 +383,25 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
       return;
     }
     try {
+      debugPrint('LogEntry: saving sets=${sets.toString()} for exercise=${widget.exerciseId}');
   await _pb.createLog(widget.athleteId, widget.planId, widget.exerciseId, sets);
       // Print the server response for debugging and optionally show it in a dialog
+      debugPrint('LogEntry: createLog called successfully');
+      try {
+        final sp = await SharedPreferences.getInstance();
+        final key = 'last_log_${widget.athleteId}_${widget.exerciseId}';
+        await sp.setString(key, jsonEncode(sets));
+        debugPrint('LogEntry: cached last log to SharedPreferences key=$key');
+      } catch (e) {
+        debugPrint('LogEntry: failed to write cache: $e');
+      }
       if (!mounted) return;
       // simple confirmation
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Log saved')));
 
       Navigator.of(context).pop(true);
     } catch (e) {
+      debugPrint('LogEntry: createLog failed: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to save log')));
     }
@@ -257,14 +420,7 @@ class _LogEntryScreenState extends State<LogEntryScreen> {
   }
 
 
-  @override
-  void dispose() {
-    for (final c in _weightControllers) {
-      c.dispose();
-    }
-    try { _videoController?.dispose(); } catch (_) {}
-    super.dispose();
-  }
+  // dispose moved earlier to ensure RouteObserver unsubscribed
 
   @override
   Widget build(BuildContext context) {

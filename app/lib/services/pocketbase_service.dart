@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,19 +18,40 @@ class PocketBaseService {
   bool _tokenLoaded = false;
 
   // Singleton instance
-  static final PocketBaseService _instance = PocketBaseService._internal('http://10.0.2.2:8090');
+  static final PocketBaseService _instance = PocketBaseService._internal(
+    // Use localhost for web builds (running in browser) and 10.0.2.2 for
+    // Android emulator by default. Callers may still pass an explicit
+    // `baseUrl` to override this behavior.
+    (kIsWeb ? 'http://localhost:8090' : 'http://10.0.2.2:8090'),
+  );
+
+  // For testability we support creating an instance with an injected
+  // `http.Client`. Production callers should continue using the default
+  // singleton via the factory constructor.
 
   /// Returns the shared PocketBaseService instance. Passing [baseUrl]
   /// will update the instance's baseUrl (useful for tests or non-emulator runs).
-  factory PocketBaseService({String baseUrl = 'http://10.0.2.2:8090'}) {
-    _instance.baseUrl = baseUrl;
+  factory PocketBaseService({String? baseUrl}) {
+    if (baseUrl != null) _instance.baseUrl = baseUrl;
     return _instance;
   }
 
+  /// Create a non-singleton instance with an injectable HTTP client. Useful
+  /// for unit tests that mock network interactions.
+  PocketBaseService.withClient({String? baseUrl, http.Client? client}) : baseUrl = (baseUrl ?? (kIsWeb ? 'http://localhost:8090' : 'http://10.0.2.2:8090')) {
+    _client = client ?? http.Client();
+    _restoreToken();
+  }
+
   PocketBaseService._internal(this.baseUrl) {
+    // default client for singleton
+    _client = http.Client();
     // restore token asynchronously (non-blocking)
     _restoreToken();
   }
+
+  // HTTP client used for requests. Injected in tests via `withClient`.
+  late final http.Client _client;
 
   void _logAndThrow(http.Response res, String context) {
     // Print response body (if any) to help diagnose 4xx/5xx failures during
@@ -71,7 +93,7 @@ class PocketBaseService {
   Future<Map<String, dynamic>> signIn(String email, String password) async {
     final url = Uri.parse('$baseUrl/api/collections/users/auth-with-password');
     final body = jsonEncode({'identity': email, 'password': password});
-    final res = await http.post(url, headers: { 'Content-Type': 'application/json' }, body: body);
+    final res = await _client.post(url, headers: { 'Content-Type': 'application/json' }, body: body);
     if (res.statusCode != 200) {
       _logAndThrow(res, 'Auth');
     }
@@ -124,7 +146,7 @@ class PocketBaseService {
       if (role.isNotEmpty) 'role': role,
       if (trainerId != null) 'trainer': trainerId,
     });
-    final res = await http.post(url, headers: { 'Content-Type': 'application/json' }, body: body);
+    final res = await _client.post(url, headers: { 'Content-Type': 'application/json' }, body: body);
     if (res.statusCode != 200 && res.statusCode != 201) {
       _logAndThrow(res, 'Sign up');
     }
@@ -164,7 +186,7 @@ class PocketBaseService {
     await _ensureTokenLoaded();
     final filter = Uri.encodeQueryComponent('athlete = "$athleteId" && date = "$date"');
     final url = Uri.parse('$baseUrl/api/collections/plans/records?filter=$filter');
-  final res = await http.get(url, headers: _jsonHeaders);
+  final res = await _client.get(url, headers: _jsonHeaders);
   if (res.statusCode != 200) _logAndThrow(res, 'Fetch plans');
   final data = jsonDecode(res.body) as Map<String,dynamic>;
     // PocketBase returns items in `items` for list endpoints
@@ -185,7 +207,7 @@ class PocketBaseService {
       'sets': (sets is String) ? sets : jsonEncode(sets),
       'createdAt': DateTime.now().toIso8601String(),
     });
-    final res = await http.post(url, headers: _jsonHeaders, body: body);
+    final res = await _client.post(url, headers: _jsonHeaders, body: body);
   if (res.statusCode != 200 && res.statusCode != 201) _logAndThrow(res, 'Create log');
     return jsonDecode(res.body) as Map<String,dynamic>;
   }
@@ -193,17 +215,30 @@ class PocketBaseService {
   /// Fetch logs for a specific athlete/plan/exercise. Returns list of log records sorted by createdAt desc.
   Future<List<dynamic>> fetchLogsForExercise(String athleteId, String planId, String exerciseId, {int perPage = 20}) async {
     await _ensureTokenLoaded();
-
     // First try: include the plan filter. This works when the server stores
     // the `plan` relation as a single id value. If the server stores the
     // relation as an array or another shape the filter may return no items,
-    // so we fall back to a broader query below.
+    // so we fall back to a broader query below. If the server returns a
+    // non-200 for the plan-filtered query we log and continue to the
+    // fallback instead of throwing immediately so we still have a chance
+    // to retrieve recent logs.
     final planFilter = Uri.encodeQueryComponent('athlete = "$athleteId" && plan = "$planId" && exerciseId = "$exerciseId"');
     var url = Uri.parse('$baseUrl/api/collections/logs/records?filter=$planFilter&perPage=$perPage&sort=-createdAt');
-    var res = await http.get(url, headers: _jsonHeaders);
-    if (res.statusCode != 200) _logAndThrow(res, 'Fetch logs (plan filter)');
-    var data = jsonDecode(res.body) as Map<String,dynamic>;
-    var items = data['items'] as List<dynamic>? ?? [];
+    var res = await _client.get(url, headers: _jsonHeaders);
+    List<dynamic> items = [];
+    if (res.statusCode == 200) {
+      try {
+        var data = jsonDecode(res.body) as Map<String,dynamic>;
+        items = data['items'] as List<dynamic>? ?? [];
+      } catch (e) {
+        debugPrint('Fetch logs (plan filter) parse failed: $e');
+        items = [];
+      }
+    } else {
+      // Log the plan-filtered error and continue to fallback
+      debugPrint('Fetch logs (plan filter) non-200: ${res.statusCode} ${res.body}');
+      items = [];
+    }
 
     if (items.isNotEmpty) return items;
 
@@ -211,10 +246,96 @@ class PocketBaseService {
     // logs even if the `plan` filter didn't match due to relation shape.
     final fallbackFilter = Uri.encodeQueryComponent('athlete = "$athleteId" && exerciseId = "$exerciseId"');
     url = Uri.parse('$baseUrl/api/collections/logs/records?filter=$fallbackFilter&perPage=$perPage&sort=-createdAt');
-    res = await http.get(url, headers: _jsonHeaders);
-    if (res.statusCode != 200) _logAndThrow(res, 'Fetch logs (fallback)');
-    data = jsonDecode(res.body) as Map<String,dynamic>;
-    return data['items'] as List<dynamic>? ?? [];
+    res = await _client.get(url, headers: _jsonHeaders);
+    List<dynamic> fallbackItems = [];
+    if (res.statusCode == 200) {
+      try {
+        var data = jsonDecode(res.body) as Map<String,dynamic>;
+        fallbackItems = data['items'] as List<dynamic>? ?? [];
+      } catch (e) {
+        debugPrint('Fetch logs (fallback) parse failed: $e');
+        fallbackItems = [];
+      }
+    } else {
+      debugPrint('Fetch logs (fallback) non-200: ${res.statusCode} ${res.body}');
+      // don't throw yet — try client-side fallback below
+      fallbackItems = [];
+    }
+
+    if (fallbackItems.isNotEmpty) return fallbackItems;
+
+    // As a last-resort, fetch recent logs without any server-side filter
+    // and filter client-side. This avoids server-side filter parsing
+    // errors and works with varying relation shapes stored in records.
+    try {
+      final recentUrl = Uri.parse('$baseUrl/api/collections/logs/records?perPage=50&sort=-createdAt');
+      final recentRes = await _client.get(recentUrl, headers: _jsonHeaders);
+      if (recentRes.statusCode != 200) {
+        // Emit fuller debug info to help diagnose 4xx/5xx failures from
+        // the PocketBase list endpoint (includes URL, headers, status,
+        // and response body). This is intentionally verbose and only
+        // intended for short-term debugging while we trace the 400s.
+        try {
+          debugPrint('Fetch logs (client fallback) URL: $recentUrl');
+          debugPrint('Fetch logs (client fallback) headers: ${_jsonHeaders}');
+          debugPrint('Fetch logs (client fallback) status: ${recentRes.statusCode}');
+          debugPrint('Fetch logs (client fallback) body: ${recentRes.body}');
+        } catch (_) {}
+        _logAndThrow(recentRes, 'Fetch logs (client fallback)');
+      }
+      final recentData = jsonDecode(recentRes.body) as Map<String, dynamic>;
+      final recentItems = recentData['items'] as List<dynamic>? ?? [];
+      return filterRecentLogsByAthleteAndExercise(recentItems, athleteId, exerciseId);
+    } catch (e) {
+      // If even the client fallback fails, rethrow the original fallback error
+      debugPrint('Fetch logs (client fallback) failed: $e');
+      _logAndThrow(res, 'Fetch logs (fallback)');
+    }
+    return <dynamic>[];
+  }
+
+  /// Filter a list of recent log items client-side to those referencing
+  /// [athleteId] and [exerciseId]. This helper is deterministic and
+  /// suitable for unit-testing the client-side fallback logic without
+  /// performing network requests.
+  List<dynamic> filterRecentLogsByAthleteAndExercise(List<dynamic> recentItems, String athleteId, String exerciseId) {
+    final filtered = <dynamic>[];
+    for (final raw in recentItems) {
+      try {
+        if (raw is! Map<String, dynamic>) continue;
+        // Extract candidate athlete field from several shapes
+        dynamic athleteField = raw['athlete'];
+        if (athleteField == null && raw.containsKey('data') && raw['data'] is Map) athleteField = raw['data']['athlete'];
+        if (athleteField == null && raw.containsKey('record') && raw['record'] is Map) athleteField = raw['record']['athlete'];
+
+        bool athleteMatches = false;
+        if (athleteField is String) {
+          if (athleteField.trim() == athleteId) athleteMatches = true;
+        } else if (athleteField is Map) {
+          final idVal = athleteField['id'] ?? athleteField[r'$id'] ?? athleteField['value'];
+          if (idVal is String && idVal.trim() == athleteId) athleteMatches = true;
+        } else if (athleteField is List) {
+          for (final e in athleteField) {
+            if (e is String && e.trim() == athleteId) { athleteMatches = true; break; }
+            if (e is Map) {
+              final idVal = e['id'] ?? e[r'$id'] ?? e['value'];
+              if (idVal is String && idVal.trim() == athleteId) { athleteMatches = true; break; }
+            }
+          }
+        }
+
+        if (!athleteMatches) continue;
+
+        // Extract exerciseId from several possible places
+        dynamic exField = raw['exerciseId'];
+        if (exField == null && raw.containsKey('data') && raw['data'] is Map) exField = raw['data']['exerciseId'];
+        if (exField == null && raw.containsKey('record') && raw['record'] is Map) exField = raw['record']['exerciseId'];
+        if (exField is String && exField == exerciseId) filtered.add(raw);
+      } catch (_) {
+        // ignore malformed entries
+      }
+    }
+    return filtered;
   }
 
   /// Normalize a `sets` field from a log record into a List<Map> with
@@ -232,7 +353,8 @@ class PocketBaseService {
     // Defensive decoding: some records are stored as JSON-encoded strings
     // and some may have been double-encoded (a string containing escaped
     // JSON). Attempt repeated decoding up to a few times to recover the
-    // actual list shape.
+    // actual list shape. Before decoding sanitize common whitespace
+    // and locale-specific separators.
     dynamic working = setsRaw;
     for (var attempt = 0; attempt < 3; attempt++) {
       if (working is List) {
@@ -241,21 +363,41 @@ class PocketBaseService {
       }
       if (working is String) {
         try {
-          final p = jsonDecode(working);
-          // If decoding yields a list, we're done. If it yields another
-          // string (double-encoded) we'll loop and try again.
+          var candidate = working.trim();
+          // remove common non-breaking spaces
+          candidate = candidate.replaceAll(RegExp(r'\u00A0'), '');
+
+          // Heuristic to normalize thousands/decimal separators:
+          // - If both '.' and ',' appear and the last comma comes after
+          //   the last dot, assume European style (1.234,56): remove dots
+          //   and convert ',' -> '.'.
+          // - If both appear and comma is before dot, assume dot is decimal
+          //   and comma is thousands, so remove commas.
+          // - If only comma is present, treat it as decimal separator -> replace with '.'.
+          if (candidate.contains('.') && candidate.contains(',')) {
+            final lastDot = candidate.lastIndexOf('.');
+            final lastComma = candidate.lastIndexOf(',');
+            if (lastComma > lastDot) {
+              candidate = candidate.replaceAll('.', '');
+              candidate = candidate.replaceAll(',', '.');
+            } else {
+              candidate = candidate.replaceAll(',', '');
+            }
+          } else if (candidate.contains(',') && !candidate.contains('.')) {
+            candidate = candidate.replaceAll(',', '.');
+          }
+
+          final p = jsonDecode(candidate);
           working = p;
           if (working is List) {
             parsed = working;
             break;
           }
         } catch (_) {
-          // not valid JSON string, break and treat as empty
           working = null;
           break;
         }
       } else {
-        // unknown shape, break
         break;
       }
     }
@@ -265,10 +407,27 @@ class PocketBaseService {
       try {
         if (s is Map) {
           final m = Map<String, dynamic>.from(s);
-          final wraw = m['weight'];
+          var wraw = m['weight'];
           double? w;
-          if (wraw is num) w = wraw.toDouble();
-          else w = double.tryParse(wraw?.toString() ?? '');
+          if (wraw is num) {
+            w = wraw.toDouble();
+          } else {
+            var wstr = (wraw ?? '').toString().trim();
+            wstr = wstr.replaceAll(RegExp(r'\u00A0'), '');
+            if (wstr.contains(',') && wstr.contains('.')) {
+              final lastDot = wstr.lastIndexOf('.');
+              final lastComma = wstr.lastIndexOf(',');
+              if (lastComma > lastDot) {
+                wstr = wstr.replaceAll('.', '');
+                wstr = wstr.replaceAll(',', '.');
+              } else {
+                wstr = wstr.replaceAll(',', '');
+              }
+            } else if (wstr.contains(',') && !wstr.contains('.')) {
+              wstr = wstr.replaceAll(',', '.');
+            }
+            w = double.tryParse(wstr);
+          }
           if (w != null) m['weight'] = w;
           out.add(m);
         }

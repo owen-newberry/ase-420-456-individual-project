@@ -1,0 +1,39 @@
+name: Build and Deploy Hugo site
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'hugo-site/**'
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hugo-site
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v2
+        with:
+          hugo-version: '0.111.3'
+          extended: true
+
+      - name: Install Node (for asset tooling)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Build site
+        run: |
+          hugo --minify
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v4
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
