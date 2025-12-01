@@ -19,3 +19,4 @@ theme = "project-theme"
     name = "About"
     url = "/about/"
     weight = 3
+
