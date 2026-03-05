@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/services/pocketbase_service.dart';
+import 'package:forge_workout/services/database_service.dart';
 
 void main() {
   group('normalizeSetsField edge cases', () {
-    final pb = PocketBaseService(baseUrl: 'http://example');
+    final pb = DatabaseService();
 
     test('parses JSON string with comma decimals and thousands separators', () {
       final input = '[{"weight":"1.234,56","reps":5},{"weight":"2,5","reps":3}]';

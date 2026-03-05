@@ -3,22 +3,21 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:app/screens/logEntry.dart';
+import 'package:forge_workout/screens/logEntry.dart';
 
 void main() {
   testWidgets('LogEntry pre-fills from SharedPreferences cache', (WidgetTester tester) async {
     // Arrange: mock shared preferences with a cached last_log entry
-    final athleteId = 'athX';
     final exerciseId = 'exY';
-    final key = 'last_log_${athleteId}_$exerciseId';
+    final key = 'last_log_$exerciseId';
     final cachedSets = jsonEncode([
       {'weight': 55.0, 'reps': 5, 'notes': '', 'timestamp': DateTime.now().toIso8601String()},
       {'weight': 60.0, 'reps': 5, 'notes': '', 'timestamp': DateTime.now().toIso8601String()},
     ]);
-    SharedPreferences.setMockInitialValues({key: cachedSets, 'pb_user_id': athleteId});
+    SharedPreferences.setMockInitialValues({key: cachedSets});
 
     // Build the LogEntry screen
-    await tester.pumpWidget(MaterialApp(home: LogEntryScreen(athleteId: athleteId, planId: 'plan1', exerciseId: exerciseId)));
+    await tester.pumpWidget(MaterialApp(home: LogEntryScreen(planId: 'plan1', exerciseId: exerciseId)));
 
     // Allow async init to complete
     await tester.pumpAndSettle();

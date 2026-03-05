@@ -1,48 +1,39 @@
 import 'package:flutter/material.dart';
 import 'utils/route_observer.dart';
-import 'screens/dayView.dart';
+import 'screens/home.dart';
 import 'screens/logEntry.dart';
-import 'screens/sign_up.dart';
-import 'screens/select_role.dart';
-import 'screens/trainer_dashboard.dart';
-// Dev helper: set to true to bypass sign-in and open DayView with a test athlete id.
-// Set to false so app opens the sign-in/sign-up flow by default.
-const bool kBypassSignIn = false;
-const String kDevAthleteId = 'dev-athlete-id-0001';
 
-// A RouteObserver so screens can know when they become visible again
 void main() {
-  runApp(MyApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const ForgeWorkoutApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+class ForgeWorkoutApp extends StatelessWidget {
+  const ForgeWorkoutApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    // DNA Sports Center brand colors
+    // Forge Workout brand colors
     const brandWhite = Color(0xFFFFFFFF);
-    const brandBlack = Color(0xFF000000);
-    const brandRed = Color(0xFFCC0000);
+    const brandBlack = Color(0xFF1A1A2E);
+    const brandAccent = Color(0xFFE94560);
     const brandGray = Color(0xFF9E9E9E);
 
     final colorScheme = ColorScheme(
       brightness: Brightness.light,
-      primary: brandRed,
+      primary: brandAccent,
       onPrimary: brandWhite,
       secondary: brandGray,
       onSecondary: brandBlack,
       error: Colors.red.shade700,
       onError: brandWhite,
-      background: brandWhite,
-      onBackground: brandBlack,
       surface: brandWhite,
       onSurface: brandBlack,
     );
 
     final theme = ThemeData(
       colorScheme: colorScheme,
-      primaryColor: brandRed,
+      primaryColor: brandAccent,
       scaffoldBackgroundColor: brandWhite,
       appBarTheme: const AppBarTheme(
         backgroundColor: brandBlack,
@@ -52,55 +43,60 @@ class MyApp extends StatelessWidget {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: brandRed,
+          backgroundColor: brandAccent,
           foregroundColor: brandWhite,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
           textStyle: const TextStyle(fontWeight: FontWeight.w600),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(foregroundColor: brandRed),
+        style: TextButton.styleFrom(foregroundColor: brandAccent),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: brandWhite,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0), borderSide: BorderSide(color: brandGray)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0), borderSide: BorderSide(color: brandGray)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0), borderSide: BorderSide(color: brandRed)),
-        labelStyle: TextStyle(color: brandBlack),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0), borderSide: const BorderSide(color: brandGray)),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0), borderSide: const BorderSide(color: brandGray)),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0), borderSide: const BorderSide(color: brandAccent)),
+        labelStyle: const TextStyle(color: brandBlack),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: brandBlack,
+        indicatorColor: brandAccent.withOpacity(0.2),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return const IconThemeData(color: brandAccent);
+          }
+          return IconThemeData(color: brandWhite.withOpacity(0.7));
+        }),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return const TextStyle(color: brandAccent, fontSize: 12, fontWeight: FontWeight.w600);
+          }
+          return TextStyle(color: brandWhite.withOpacity(0.7), fontSize: 12);
+        }),
       ),
       dividerColor: brandGray,
-  cardColor: brandWhite,
+      cardColor: brandWhite,
     );
 
     return MaterialApp(
-      title: 'DNA Sports Center',
+      title: 'Forge Workout',
       theme: theme,
       navigatorObservers: [routeObserver],
-  home: kBypassSignIn ? DayView(athleteId: kDevAthleteId) : const SelectRoleScreen(),
+      home: const HomeScreen(),
       onGenerateRoute: (settings) {
-        if (settings.name == '/day') {
-          final args = settings.arguments as Map<String, dynamic>?;
-          final athleteId = args != null ? args['athleteId'] as String? : null;
-          return MaterialPageRoute(builder: (_) => DayView(athleteId: athleteId ?? ''));
-        }
-        if (settings.name == '/trainer') {
-          final args = settings.arguments as Map<String, dynamic>?;
-          final trainerId = args != null ? args['trainerId'] as String? : null;
-          if (trainerId == null) return null;
-          return MaterialPageRoute(builder: (_) => TrainerDashboard(trainerId: trainerId));
-        }
-        if (settings.name == '/signup') {
-          final args = settings.arguments as Map<String, dynamic>?;
-          final role = args != null ? args['role'] as String? : null;
-          return MaterialPageRoute(builder: (_) => SignUpScreen(initialRole: role));
-        }
         if (settings.name == '/log') {
           final args = settings.arguments as Map<String, dynamic>?;
-          final athleteId = args?['athleteId'] as String? ?? '';
           final planId = args?['planId'] as String? ?? '';
           final exerciseId = args?['exerciseId'] as String? ?? '';
-          return MaterialPageRoute(builder: (_) => LogEntryScreen(athleteId: athleteId, planId: planId, exerciseId: exerciseId, exercise: args?['exercise'] as Map<String,dynamic>?));
+          return MaterialPageRoute(
+            builder: (_) => LogEntryScreen(
+              planId: planId,
+              exerciseId: exerciseId,
+              exercise: args?['exercise'] as Map<String, dynamic>?,
+            ),
+          );
         }
         return null;
       },

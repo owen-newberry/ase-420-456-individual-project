@@ -1,24 +1,21 @@
 import 'dart:convert';
-import 'package:file_selector/file_selector.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
-import '../services/pocketbase_service.dart';
+import '../services/database_service.dart';
 
+/// Create or edit a workout template with day-of-week exercise assignments.
 class ManageTemplateScreen extends StatefulWidget {
   final String? templateId;
-  final String trainerId;
-  const ManageTemplateScreen({Key? key, this.templateId, required this.trainerId}) : super(key: key);
+  const ManageTemplateScreen({Key? key, this.templateId}) : super(key: key);
 
   @override
   _ManageTemplateScreenState createState() => _ManageTemplateScreenState();
 }
 
 class _ManageTemplateScreenState extends State<ManageTemplateScreen> {
-  final _pb = PocketBaseService();
+  final _db = DatabaseService();
   bool _loading = true;
   String _name = '';
   String? _templateId;
-  // exercises stored as list of maps; each item includes a `day` int 0..6 (Sunday..Saturday)
   List<Map<String, dynamic>> _exercises = [];
 
   static const List<String> _dayNames = [
@@ -43,31 +40,32 @@ class _ManageTemplateScreenState extends State<ManageTemplateScreen> {
       return;
     }
     try {
-      final tpl = await _pb.getTemplateById(_templateId!);
+      final tpl = await _db.getTemplateById(_templateId!);
       setState(() {
         _name = tpl['name'] ?? '';
         final raw = tpl['exercises'];
-        if (raw == null) _exercises = [];
-        else if (raw is String) {
+        if (raw == null) {
+          _exercises = [];
+        } else if (raw is String) {
           try {
             final parsed = jsonDecode(raw);
-            if (parsed is List) _exercises = List<Map<String,dynamic>>.from(parsed.map((e) => Map<String,dynamic>.from(e)));
+            if (parsed is List) _exercises = List<Map<String, dynamic>>.from(parsed.map((e) => Map<String, dynamic>.from(e)));
             else _exercises = [];
           } catch (_) { _exercises = []; }
         } else if (raw is List) {
-          _exercises = List<Map<String,dynamic>>.from(raw.map((e) => Map<String,dynamic>.from(e)));
+          _exercises = List<Map<String, dynamic>>.from(raw.map((e) => Map<String, dynamic>.from(e)));
         } else {
           _exercises = [];
         }
       });
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Load template failed: ${e.toString()}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Load template failed: ${e.toString()}')));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  List<Map<String,dynamic>> _exercisesForDay(int day) {
+  List<Map<String, dynamic>> _exercisesForDay(int day) {
     return _exercises.where((e) => (e['day'] ?? 0) == day).toList();
   }
 
@@ -75,51 +73,52 @@ class _ManageTemplateScreenState extends State<ManageTemplateScreen> {
     final nameCtrl = TextEditingController();
     final setsCtrl = TextEditingController(text: '3');
     final repsCtrl = TextEditingController(text: '8');
-    final res = await showDialog<bool>(context: context, builder: (ctx) {
-      return AlertDialog(
+    final res = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
         title: const Text('Add exercise'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Exercise name')),
-            TextField(controller: setsCtrl, decoration: const InputDecoration(labelText: 'Sets'), keyboardType: TextInputType.number),
-            TextField(controller: repsCtrl, decoration: const InputDecoration(labelText: 'Reps')),
-          ],
-        ),
-        actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')), ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Add'))],
-      );
-    });
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Exercise name')),
+          TextField(controller: setsCtrl, decoration: const InputDecoration(labelText: 'Sets'), keyboardType: TextInputType.number),
+          TextField(controller: repsCtrl, decoration: const InputDecoration(labelText: 'Reps')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Add')),
+        ],
+      ),
+    );
     if (res != true) return;
-    final ex = {
-      'id': DateTime.now().millisecondsSinceEpoch.toString(),
-      'name': nameCtrl.text.trim(),
-      'sets': int.tryParse(setsCtrl.text) ?? 3,
-      'reps': repsCtrl.text.trim(),
-      'day': day,
-    };
     setState(() {
-      _exercises.add(ex);
+      _exercises.add({
+        'id': DateTime.now().millisecondsSinceEpoch.toString(),
+        'name': nameCtrl.text.trim(),
+        'sets': int.tryParse(setsCtrl.text) ?? 3,
+        'reps': repsCtrl.text.trim(),
+        'day': day,
+      });
     });
   }
 
-  Future<void> _editExercise(Map<String,dynamic> ex) async {
+  Future<void> _editExercise(Map<String, dynamic> ex) async {
     final nameCtrl = TextEditingController(text: ex['name'] ?? '');
     final setsCtrl = TextEditingController(text: (ex['sets'] ?? '').toString());
     final repsCtrl = TextEditingController(text: (ex['reps'] ?? '').toString());
-    final res = await showDialog<bool>(context: context, builder: (ctx) {
-      return AlertDialog(
+    final res = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
         title: const Text('Edit exercise'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Exercise name')),
-            TextField(controller: setsCtrl, decoration: const InputDecoration(labelText: 'Sets'), keyboardType: TextInputType.number),
-            TextField(controller: repsCtrl, decoration: const InputDecoration(labelText: 'Reps')),
-          ],
-        ),
-        actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')), ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Save'))],
-      );
-    });
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Exercise name')),
+          TextField(controller: setsCtrl, decoration: const InputDecoration(labelText: 'Sets'), keyboardType: TextInputType.number),
+          TextField(controller: repsCtrl, decoration: const InputDecoration(labelText: 'Reps')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Save')),
+        ],
+      ),
+    );
     if (res != true) return;
     setState(() {
       final idx = _exercises.indexWhere((e) => e['id'] == ex['id']);
@@ -144,30 +143,16 @@ class _ManageTemplateScreenState extends State<ManageTemplateScreen> {
     setState(() => _loading = true);
     try {
       if (_templateId == null) {
-        final created = await _pb.createTemplate(_name, _exercises, createdBy: widget.trainerId);
+        final created = await _db.createTemplate(_name, _exercises);
         _templateId = created['id'] as String?;
       } else {
-        await _pb.updateTemplate(_templateId!, {'name': _name, 'exercises': _exercises});
+        await _db.updateTemplate(_templateId!, {'name': _name, 'exercises': _exercises});
       }
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Template saved')));
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Save failed: ${e.toString()}')));
     } finally {
       if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _applyTemplate(int weeks, String athleteId) async {
-    if (_templateId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please save the template before applying')));
-      return;
-    }
-    try {
-      // applyTemplateToAthlete will fetch the template and create plans
-      await _pb.applyTemplateToAthlete(_templateId!, athleteId, DateTime.now(), weeks, createdBy: widget.trainerId);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Template applied')));
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Apply failed: ${e.toString()}')));
     }
   }
 
@@ -198,19 +183,17 @@ class _ManageTemplateScreenState extends State<ManageTemplateScreen> {
                             title: Text(_dayNames[day]),
                             trailing: IconButton(icon: const Icon(Icons.add), onPressed: () => _addExerciseForDay(day)),
                             children: items.isEmpty
-                                  ? [ListTile(title: Text('No exercises'))]
-                                  : items.map((ex) {
-                                      return ListTile(
-                                        title: Text(ex['name'] ?? ''),
-                                        subtitle: Text('Sets: ${ex['sets'] ?? ''} • Reps: ${ex['reps'] ?? ''}'),
-                                        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                                          // Allow attaching a demo/video to exercises while editing a template
-                                          IconButton(icon: const Icon(Icons.video_file), onPressed: () => _uploadVideoForExercise(ex)),
-                                          IconButton(icon: const Icon(Icons.edit), onPressed: () => _editExercise(ex)),
-                                          IconButton(icon: const Icon(Icons.delete), onPressed: () => _deleteExercise(ex['id'] as String)),
-                                        ]),
-                                      );
-                                    }).toList(),
+                                ? [const ListTile(title: Text('No exercises'))]
+                                : items.map((ex) {
+                                    return ListTile(
+                                      title: Text(ex['name'] ?? ''),
+                                      subtitle: Text('Sets: ${ex['sets'] ?? ''} • Reps: ${ex['reps'] ?? ''}'),
+                                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                                        IconButton(icon: const Icon(Icons.edit), onPressed: () => _editExercise(ex)),
+                                        IconButton(icon: const Icon(Icons.delete), onPressed: () => _deleteExercise(ex['id'] as String)),
+                                      ]),
+                                    );
+                                  }).toList(),
                           ),
                         );
                       },
@@ -229,49 +212,37 @@ class _ManageTemplateScreenState extends State<ManageTemplateScreen> {
             icon: const Icon(Icons.save),
           ),
           const SizedBox(height: 8),
-          // Keep apply button small; requires athlete id to apply - we'll prompt for one
           FloatingActionButton.extended(
             heroTag: 'applyTpl',
             onPressed: () async {
-              // Show a dropdown of athletes (for this trainer) instead of asking for raw id
-              final weeksCtrl = TextEditingController(text: '1');
-              String? selectedAthleteId;
-              List<dynamic> athletes = [];
-              try {
-                athletes = await _pb.fetchAthletesForTrainer(widget.trainerId);
-              } catch (_) {
-                athletes = [];
+              if (_templateId == null) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please save the template first')));
+                return;
               }
-              final res = await showDialog<bool>(context: context, builder: (ctx) {
-                return StatefulBuilder(builder: (ctx2, setState2) {
-                  final items = athletes.map((a) {
-                    final map = a as Map<String,dynamic>;
-                    final label = (map['displayName'] ?? map['email'] ?? map['id']).toString();
-                    return DropdownMenuItem(value: map['id'] as String?, child: Text(label));
-                  }).toList();
-                  return AlertDialog(
-                    title: const Text('Apply template to athlete'),
-                    content: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (items.isEmpty) const Text('No athletes found for this trainer'),
-                        if (items.isNotEmpty)
-                          DropdownButton<String?>(
-                            value: selectedAthleteId,
-                            items: items,
-                            hint: const Text('Select athlete'),
-                            onChanged: (v) => setState2(() => selectedAthleteId = v),
-                          ),
-                        TextField(controller: weeksCtrl, decoration: const InputDecoration(labelText: 'Weeks'), keyboardType: TextInputType.number),
-                      ],
-                    ),
-                    actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')), ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Apply'))],
-                  );
-                });
-              });
-              if (res == true && selectedAthleteId != null && selectedAthleteId!.isNotEmpty) {
+              final weeksCtrl = TextEditingController(text: '1');
+              final res = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Apply template'),
+                  content: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const Text('Create plans from this template starting today.'),
+                    const SizedBox(height: 12),
+                    TextField(controller: weeksCtrl, decoration: const InputDecoration(labelText: 'Weeks'), keyboardType: TextInputType.number),
+                  ]),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+                    ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Apply')),
+                  ],
+                ),
+              );
+              if (res == true) {
                 final weeks = int.tryParse(weeksCtrl.text) ?? 1;
-                await _applyTemplate(weeks, selectedAthleteId!);
+                try {
+                  await _db.applyTemplate(_templateId!, DateTime.now(), weeks);
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Template applied')));
+                } catch (e) {
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Apply failed: ${e.toString()}')));
+                }
               }
             },
             label: const Text('Apply'),
@@ -280,49 +251,5 @@ class _ManageTemplateScreenState extends State<ManageTemplateScreen> {
         ],
       ),
     );
-  }
-
-  /// Allow uploading a demo video and attach it to a template exercise.
-  Future<void> _uploadVideoForExercise(Map<String,dynamic> ex) async {
-    // Reuse the PocketBaseService upload flow: ask for metadata then pick file
-    final titleCtrl = TextEditingController(text: '${ex['name'] ?? 'Exercise'} demo');
-    final descCtrl = TextEditingController(text: ex['description'] ?? '');
-    final metaOk = await showDialog<bool>(context: context, builder: (ctx) {
-      return AlertDialog(
-        title: const Text('Video metadata'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: 'Title')),
-            const SizedBox(height: 8),
-            TextField(controller: descCtrl, decoration: const InputDecoration(labelText: 'Description')),
-          ],
-        ),
-        actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')), ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Continue'))],
-      );
-    });
-    if (metaOk != true) return;
-    // pick file
-    try {
-      final typeGroup = XTypeGroup(label: 'videos', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi']);
-      final xfile = await openFile(acceptedTypeGroups: [typeGroup]);
-      if (xfile == null) return;
-      final bytes = await xfile.readAsBytes();
-      final title = titleCtrl.text.trim().isEmpty ? (ex['name'] ?? 'Video') : titleCtrl.text.trim();
-      final description = descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim();
-      final vid = await _pb.uploadVideo(title, description: description, bytes: bytes, filename: xfile.name);
-      // attach video data into the exercise map so template carries the reference
-      setState(() {
-        final idx = _exercises.indexWhere((e) => e['id'] == ex['id']);
-        if (idx >= 0) {
-          _exercises[idx] = { ..._exercises[idx], 'video': vid };
-        }
-      });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Video uploaded and attached to exercise')));
-    } on MissingPluginException catch (_) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('File selector plugin not registered. Rebuild the app.')));
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Upload failed: ${e.toString()}')));
-    }
   }
 }

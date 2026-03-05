@@ -1,12 +1,12 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:app/services/pocketbase_service.dart';
+import 'package:forge_workout/services/database_service.dart';
 
 void main() {
   group('normalizeSetsField parsing', () {
     test('parses JSON-array string and native list correctly', () {
-      final pb = PocketBaseService(baseUrl: 'http://example');
+      final pb = DatabaseService();
 
       final sample = '[{"weight":1289.0,"reps":8,"notes":"","timestamp":"2025-11-30T18:55:11.860267"},{"weight":124.0,"reps":8,"notes":"","timestamp":"2025-11-30T18:55:11.860304"},{"weight":14322.0,"reps":8,"notes":"","timestamp":"2025-11-30T18:55:11.860310"}]';
 

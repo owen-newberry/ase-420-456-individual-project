@@ -1,5 +1,5 @@
-name: app
-description: "A new Flutter project."
+name: forge_workout
+description: "Forge Workout - Self-led training app"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -31,14 +31,10 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  http: ^0.13.6
-  pocketbase: ^0.4.0
+  sqflite: ^2.3.0
+  path: ^1.8.3
   shared_preferences: ^2.1.0
-  # file_picker removed due to Android v1-embedding issues; using file_selector instead.
-  file_selector: ^1.0.4
-  video_player: ^2.6.0
+  uuid: ^4.2.1
 
 dev_dependencies:
   flutter_test:
@@ -69,7 +65,7 @@ flutter:
 
   # Add the DNA logo asset. Place your logo file at `app/assets/dna_logo.png`.
   assets:
-    - assets/dna_logo.png
+    - assets/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
